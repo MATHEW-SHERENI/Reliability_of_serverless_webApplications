@@ -1,0 +1,168 @@
+% =====================================================================
+% CSCI 5360 Web Technologies -- Final Project Report (living document)
+% Mathew Shereni -- Reliability of Serverless Web Applications (Blue Track)
+%
+% This file grows a little after every working day. Rules:
+%   * Write facts while they are fresh: what was built, what was measured,
+%     what changed from the midterm plan and why, and what was learned.
+%   * Red \todo{...} text marks sections still to be written.
+%   * Section numbering follows the midterm so each part can be traced back.
+% =====================================================================
+\documentclass[10pt]{article}
+\usepackage[margin=0.75in]{geometry}
+\usepackage{mathptmx}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{ragged2e}
+\usepackage{graphicx}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage[font=small,skip=3pt]{caption}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+
+\setlist{nosep, topsep=2pt, leftmargin=1.5em}
+\titlespacing*{\section}{0pt}{8pt plus 2pt minus 2pt}{3pt plus 1pt}
+\titlespacing*{\subsection}{0pt}{5pt plus 2pt minus 1pt}{2pt plus 1pt}
+\titleformat*{\section}{\large\bfseries}
+\titleformat*{\subsection}{\normalsize\bfseries}
+\renewcommand{\arraystretch}{0.92}
+
+\newcommand{\todo}[1]{\textcolor{red}{\textbf{[TODO:} #1\textbf{]}}}
+
+\begin{document}
+\begin{center}
+{\Large\bfseries Reliability of Serverless Web Applications --- Blue Track}\\[2pt]
+{\large Final Project Report}\\[2pt]
+Mathew Shereni \quad Banner ID 001460357\\
+CSCI 5360 Web Technologies, Fall 2026 \quad December 10, 2026
+\end{center}
+
+% =====================================================================
+\section{Assigned Project and Final Scope}
+\todo{Objective as delivered; which of tasks T1--T5 were completed, each
+with its completion criterion and evidence (commit, test, or figure).}
+
+% =====================================================================
+\section{Implementation}
+
+\subsection{Development Environment and Safeguards}
+Development began on October 30, 2026, on Ubuntu 26.04 with the tool
+versions in Table~\ref{tab:tools}. Ubuntu 26.04 ships Python 3.14, while the
+Lambda functions run on the Python 3.12 runtime fixed in the design. To keep
+local tests and the cloud runtime on the same language version, the project
+uses uv to install Python 3.12 next to the system interpreter and records the
+version in a \texttt{.python-version} file; test dependencies are pinned in
+\texttt{requirements-dev.txt}.
+
+\begin{table}[h]
+\centering
+\footnotesize
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Tool} & \textbf{Version} \\
+\midrule
+Python (project environment, via uv) & 3.12.16 \\
+AWS CLI & 2.31.35 \\
+Terraform & 1.17.1 \\
+k6 (local tests) & 2.3.0 \\
+uv & 0.13.6 \\
+\bottomrule
+\end{tabular}
+\caption{Development tool versions.}
+\label{tab:tools}
+\end{table}
+
+All AWS work uses an IAM user with multi-factor authentication instead of the
+root account, which is also protected by multi-factor authentication. The AWS
+CLI uses a named profile (\texttt{b10}) fixed to us-east-2, and credentials are
+stored outside the repository. A \$20 monthly cost budget sends email alerts;
+it is configured to exclude credits, so that alerts reflect actual usage rather
+than spending after the \$119 credit has been applied (Risk~1 in the midterm).
+Because service quotas are set per region, the Lambda concurrency quota was
+checked in us-east-2 itself with \texttt{aws lambda get-account-settings},
+which confirmed 1{,}000 concurrent executions.
+
+The public repository mirrors the module structure of the design:
+\texttt{infra/} (M8), \texttt{api/} (M1--M3), \texttt{dep/} (M4),
+\texttt{load/} (M5), \texttt{orchestrate/} (M6), \texttt{analysis/} (M7), and
+\texttt{tests/}. The \texttt{.gitignore} file excludes Terraform state, local
+experiment data, and credentials, while the Terraform lock file is kept under
+version control so that the AWS provider version is pinned.
+
+\todo{Following days: Terraform foundation, dependency function and fault
+injector, Catalog API, reliability middleware, workload, orchestrator,
+metrics.}
+
+% =====================================================================
+\section{Architecture as Built}
+\todo{Final architecture and internal design figures; note any differences
+from midterm Figures 1 and 2.}
+
+% =====================================================================
+\section{Methodology as Executed}
+\todo{Research question, hypotheses, conditions, and repetitions as actually
+run; deviations from the midterm design.}
+
+% =====================================================================
+\section{Testing}
+\todo{Results of correctness tests CT1--CT7 (and T4/T5 tests if built).}
+
+% =====================================================================
+\section{Results}
+\todo{SLO verdict matrix; latency and error tables; outage time series;
+cache and concurrency figure; cost table.}
+
+% =====================================================================
+\section{Discussion}
+\todo{Answers to RQ1--RQ3; status of H1--H3; competing explanations;
+limitations.}
+
+% =====================================================================
+\section{Differences from the Midterm Plan}
+
+\begin{table}[h]
+\centering
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}l>{\RaggedRight}X>{\RaggedRight\arraybackslash}X@{}}
+\toprule
+\textbf{Date} & \textbf{Change} & \textbf{Reason} \\
+\midrule
+Oct 30 & Milestone 1 (testbed, T1) moved from November 3 to November 8;
+  a setup phase (October 30 to November 1) was added. &
+  Implementation started on October 30, after the midterm submission, so the
+  first milestone was rescheduled; later milestones keep their dates. \\
+\bottomrule
+\end{tabularx}
+\caption{Changes from the midterm plan.}
+\label{tab:changes}
+\end{table}
+
+% =====================================================================
+\section{Lessons Learned}
+\begin{itemize}
+  \item Service quotas are regional: a quota increase must be checked in the
+  region where the experiments run, not only where it was requested.
+  \item Credits can hide spending: a budget that includes credits would show
+  no cost while the credit is being used up, so the alert must exclude them.
+  \item The local interpreter can differ from the cloud runtime (Python 3.14
+  locally, 3.12 in Lambda); pinning the project version avoids tests that pass
+  locally but fail in Lambda.
+\end{itemize}
+
+% =====================================================================
+\section{AI Use Disclosure}
+\begin{itemize}
+  \item Oct 30--31: Claude (Anthropic) produced the implementation plan and
+  explained and provided the setup commands; I typed and ran each command and
+  checked its output before continuing.
+\end{itemize}
+
+% =====================================================================
+\section*{References}
+\todo{Carry over the verified references from the midterm and add any new
+sources actually used.}
+
+\end{document}
