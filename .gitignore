@@ -1,0 +1,32 @@
+# --- Python ---
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# --- Terraform ---
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+!example.tfvars
+# NOTE: .terraform.lock.hcl is deliberately NOT ignored (it pins provider versions)
+
+# --- Build output and local experiment data ---
+build/
+*.zip
+results/
+
+# --- Secrets: never commit ---
+.env
+*.pem
+.aws/
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+.DS_Store
+
+# --- One-time setup tool ---
+setup_github_project.py
