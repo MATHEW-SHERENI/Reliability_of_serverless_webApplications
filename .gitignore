@@ -28,5 +28,13 @@ results/
 .idea/
 .DS_Store
 
+# --- LaTeX build output ---
+report/*.aux
+report/*.log
+report/*.out
+report/*.fls
+report/*.fdb_latexmk
+report/*.pdf
+
 # --- One-time setup tool ---
 setup_github_project.py
