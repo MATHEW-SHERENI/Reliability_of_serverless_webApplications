@@ -92,9 +92,32 @@ The public repository mirrors the module structure of the design:
 experiment data, and credentials, while the Terraform lock file is kept under
 version control so that the AWS provider version is pinned.
 
-\todo{Following days: Terraform foundation, dependency function and fault
-injector, Catalog API, reliability middleware, workload, orchestrator,
-metrics.}
+\subsection{Infrastructure Foundation and Product Catalog}
+All AWS resources are defined in Terraform (\texttt{infra/}), with the AWS
+provider pinned to version 6.71.0 by the committed lock file. Every resource
+carries the tags \texttt{Project=b10} and \texttt{ManagedBy=terraform}, so the
+project's resources and costs can be identified in the AWS console. The three
+tables of the data model (midterm Figure~2(b)) use on-demand billing:
+\texttt{b10-products} (numeric key \texttt{product\_id}), \texttt{b10-orders}
+(string key \texttt{order\_id}), and \texttt{b10-idempotency} (string key
+\texttt{idem\_key}, with DynamoDB time-to-live on \texttt{expires\_at}). Only key
+attributes are declared, since DynamoDB does not fix other fields in advance.
+A Makefile provides \texttt{make deploy}, \texttt{make destroy},
+\texttt{make seed}, and \texttt{make test}, as promised in midterm Section~5.3.
+
+The catalog seeder (\texttt{orchestrate/seed\_catalog.py}, part of M6) writes
+1{,}000 products with a fixed random seed (5360), so the catalog is identical on
+every run. Prices are drawn between \$5 and \$500 and stored as exact decimals.
+Each product starts with a stock of 1{,}000{,}000: under the Zipf workload the
+most popular product receives about 13\% of all orders, and a small stock would
+run out during the experiments and appear as false failures. The seeder writes
+in batches and then counts the table with a consistent scan; running it twice
+still leaves 1{,}000 items, because each write replaces the item with the same
+key. Two unit tests confirm that the same seed produces the same catalog and that
+identifiers and prices are valid.
+
+\todo{Following days: dependency function and fault injector, Catalog API,
+reliability middleware, workload, orchestrator, metrics.}
 
 % =====================================================================
 \section{Architecture as Built}
@@ -150,6 +173,13 @@ Oct 30 & Milestone 1 (testbed, T1) moved from November 3 to November 8;
   \item The local interpreter can differ from the cloud runtime (Python 3.14
   locally, 3.12 in Lambda); pinning the project version avoids tests that pass
   locally but fail in Lambda.
+    \item AWS CLI profile names are case-sensitive: Terraform failed with
+  ``failed to get shared config profile'' because it asked for \texttt{b10}
+  while the profile was named \texttt{B10}.
+  \item Some changes cannot be made in place: renaming a DynamoDB table makes
+  Terraform destroy and recreate it (shown as \texttt{-/+} and
+  ``forces replacement'' in the plan), which would lose data on a populated
+  table. Reading every plan before applying it is essential.
 \end{itemize}
 
 % =====================================================================
@@ -158,6 +188,10 @@ Oct 30 & Milestone 1 (testbed, T1) moved from November 3 to November 8;
   \item Oct 30--31: Claude (Anthropic) produced the implementation plan and
   explained and provided the setup commands; I typed and ran each command and
   checked its output before continuing.
+    \item Nov 1: Claude provided and explained the Terraform files, Makefile,
+  seeder, and its tests; I typed and ran them, and diagnosed with Claude a
+  profile-name mismatch (\texttt{B10} versus \texttt{b10}) and a table-naming
+  issue before committing.
 \end{itemize}
 
 % =====================================================================
