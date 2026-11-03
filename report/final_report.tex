@@ -68,6 +68,7 @@ Python (project environment, via uv) & 3.12.16 \\
 AWS CLI & 2.31.35 \\
 Terraform & 1.17.1 \\
 AWS provider for Terraform (pinned in lock file) & 6.71.0 \\
+Archive provider for Terraform (pinned in lock file) & 2.8.1 \\
 k6 (local tests) & 2.3.0 \\
 uv & 0.13.6 \\
 \bottomrule
@@ -117,8 +118,30 @@ still leaves 1{,}000 items, because each write replaces the item with the same
 key. Two unit tests confirm that the same seed produces the same catalog and that
 identifiers and prices are valid.
 
-\todo{Following days: dependency function and fault injector, Catalog API,
-reliability middleware, workload, orchestrator, metrics.}
+\subsection{Dependency Service (M4)}
+The simulated dependency is a Python 3.12 Lambda function
+(\texttt{dep/handler.py}, 256\,MB, 5\,s timeout, reserved concurrency 400) with
+two routes. \texttt{GET /items/\{id\}} returns a product from
+\texttt{b10-products}. \texttt{POST /reserve} decrements stock and records the
+order in a single DynamoDB transaction whose condition
+(\texttt{stock >= quantity}) is checked atomically, so stock can never become
+negative and an order is never recorded without its stock decrement; a failed
+condition cancels the whole transaction and returns 409. The function is reached
+through a Lambda function URL with IAM authorization, so only signed requests are
+accepted. Its IAM role allows only \texttt{GetItem} and \texttt{UpdateItem} on
+the products table, \texttt{PutItem} on the orders table, and writing to its own
+log group, which Terraform creates with 14-day retention. Terraform packages the
+code with the archive provider and redeploys it whenever its hash changes.
+
+The function was verified with direct invocations: item 42 was returned; a
+reservation of two units reduced its stock from 1{,}000{,}000 to 999{,}998 and
+created exactly one order; a reservation larger than the stock returned 409 and
+left the orders table unchanged; and an unsigned request to the function URL
+was rejected with 403. The first invocation in a new execution environment
+reported an initialization time of 487\,ms, and its billed duration (635\,ms)
+included that initialization as well as the 147\,ms handler run. Cold starts
+therefore add cost as well as latency, which the cost model captures because it
+uses billed duration.
 
 % =====================================================================
 \section{Architecture as Built}
@@ -180,7 +203,13 @@ Oct 30 & Milestone 1 (testbed, T1) moved from November 3 to November 8;
   \item Some changes cannot be made in place: renaming a DynamoDB table makes
   Terraform destroy and recreate it (shown as \texttt{-/+} and
   ``forces replacement'' in the plan), which would lose data on a populated
-  table. Reading every plan before applying it is essential.
+  table. Reading every plan before applying it is essential.  \item In a Makefile, an undefined variable silently becomes an empty string,
+  so a missing \texttt{PY := ...} line produced confusing errors instead of a
+  clear message; the Makefile now calls the project interpreter
+  (\texttt{.venv/bin/python}) directly so it works without activating the
+  environment.
+  \item Lambda bills the initialization phase of a cold start: billed duration
+  equalled handler duration plus initialization time.
 \end{itemize}
 
 % =====================================================================
@@ -192,7 +221,12 @@ Oct 30 & Milestone 1 (testbed, T1) moved from November 3 to November 8;
     \item Nov 1: Claude provided and explained the Terraform files, Makefile,
   seeder, and its tests; I typed and ran them, and diagnosed with Claude a
   profile-name mismatch (\texttt{B10} versus \texttt{b10}) and a table-naming
-  issue before committing.
+  issue before committing.  
+  \item Nov 2--3: Claude provided and explained the dependency handler, its
+  Terraform (role, policy, function URL), and the test events; I typed, deployed,
+  and verified them, and fixed a Makefile variable error with Claude's help.
+
+
 \end{itemize}
 
 % =====================================================================
