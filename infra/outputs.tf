@@ -9,3 +9,10 @@ output "orders_table" {
 output "idempotency_table" {
   value = aws_dynamodb_table.idempotency.name
 }
+output "dependency_function_name" {
+  value = aws_lambda_function.dependency.function_name
+}
+
+output "dependency_url" {
+  value = aws_lambda_function_url.dependency.function_url
+}
