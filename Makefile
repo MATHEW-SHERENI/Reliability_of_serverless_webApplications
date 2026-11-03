@@ -2,7 +2,7 @@
 # IMPORTANT: each command line under a target must start with a TAB, not spaces.
 
 TF := terraform -chdir=infra
-
+PY := .venv/bin/python
 .PHONY: init plan deploy destroy seed test
 
 init:
@@ -18,7 +18,7 @@ destroy:
 	$(TF) destroy
 
 seed:
-	python orchestrate/seed_catalog.py --table $$($(TF) output -raw products_table)
+	$(PY) orchestrate/seed_catalog.py --table $$($(TF) output -raw products_table)
 
 test:
-	python -m pytest -q
+	$(PY) -m pytest -q
