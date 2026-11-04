@@ -71,12 +71,6 @@ AWS provider for Terraform (pinned in lock file) & 6.71.0 \\
 Archive provider for Terraform (pinned in lock file) & 2.8.1 \\
 k6 (local tests) & 2.3.0 \\
 uv & 0.13.6 \\
-Nov 3 & Status mapping extended with 409 (passed through) and 502 (any other
-  client error from the dependency), in addition to the midterm's 200, 400, 404,
-  503, and 504. &
-  An order larger than the stock needs its own answer, and a rejected internal
-  call (for example 403 from a signing problem) is the service's own failure;
-  reporting it as a client error would hide it from the error rate. \\
 \bottomrule
 \end{tabular}
 \caption{Development tool versions.}
@@ -85,7 +79,7 @@ Nov 3 & Status mapping extended with 409 (passed through) and 502 (any other
 
 All AWS work uses an IAM user with multi-factor authentication instead of the
 root account, which is also protected by multi-factor authentication. The AWS
-CLI uses a named profile (\texttt{b10}) fixed to us-east-2, and credentials are
+CLI uses a named profile (\texttt{B10}) fixed to us-east-2, and credentials are
 stored outside the repository. A \$20 monthly cost budget sends email alerts;
 it is configured to exclude credits, so that alerts reflect actual usage rather
 than spending after the \$119 credit has been applied (Risk~1 in the midterm).
@@ -148,6 +142,7 @@ reported an initialization time of 487\,ms, and its billed duration (635\,ms)
 included that initialization as well as the 147\,ms handler run. Cold starts
 therefore add cost as well as latency, which the cost model captures because it
 uses billed duration.
+
 \subsection{Fault Injector (M4)}
 Faults are decided by a pure function, \texttt{decide\_fault(time, random
 generator, configuration)} in \texttt{dep/faults.py}, and carried out by the
@@ -187,18 +182,19 @@ layer to cover success, signing, the timeout, each error class, and the request
 body without any network access.
 
 A smoke check from the development laptop called the deployed function URL
-three times. The first call took 956\,ms and the next two 51 and 78\,ms.The 
-dependency's own log confirms the cause. All four calls were served by the
-same execution environment; the first reported 476\,ms of initialization plus
-127\,ms of handler time, because its own first DynamoDB call also opened a new
-connection, while the next two took 9 and 7\,ms. The remaining difference
-(about 350\,ms on the first call and 40\,ms on warm calls) is network time from
-the laptop to us-east-2, including a new HTTPS connection for the first call;
-later calls reused the pooled connection.Because a cold start of the dependency 
-alone takes about 490\,ms, new dependency environments may approach the 1{,}000\,ms 
-per-attempt timeout under conditions C2 and C3;the analysis will separate such errors 
-from other causes using the dependency's initialization times.
-% =====================================================================
+four times: three product reads and one reservation larger than the stock. The
+first read took 956\,ms and the next two 51 and 78\,ms. The dependency's own log
+confirms the cause. All four calls were served by the same execution
+environment; the first reported 476\,ms of initialization plus 127\,ms of handler
+time, because its own first DynamoDB call also opened a new connection, while
+the next two took 9 and 7\,ms. The remaining difference (about 350\,ms on the
+first call and 40 to 70\,ms on warm calls) is network time from the laptop to
+us-east-2, including a new HTTPS connection for the first call; later calls
+reused the pooled connection. Because a cold start of the dependency alone
+takes about 490\,ms, new dependency environments may approach the 1{,}000\,ms
+per-attempt timeout under conditions C2 and C3; the analysis will separate such
+errors from other causes using the dependency's initialization times.
+
 \subsection{Catalog API Handler (M1)}
 The Catalog API function (\texttt{api/app.py}) receives HTTP API events for
 \texttt{GET /products/\{id\}} and \texttt{POST /orders}. It validates input
@@ -225,6 +221,7 @@ product identifiers and eight invalid order bodies); each returns 400, and the
 test checks that the dependency client was never called. Further unit tests
 cover the success path and headers, the cold-start flag, the mapping of each
 dependency failure to its status code, and the log line. All 43 unit tests pass.
+
 \subsection{Catalog Deployment and First End-to-End Requests}
 The Catalog function (Python 3.12, 256\,MB, 5\,s timeout, reserved concurrency
 400) sits behind an API Gateway HTTP API with two routes,
@@ -233,8 +230,8 @@ integration (payload format 2.0), and an automatically deployed default stage.
 Two permissions connect the pieces: the Catalog's role may invoke only the
 dependency's function URL, and a resource-based policy allows only this API to
 invoke the Catalog. Terraform passes the dependency URL to the Catalog as an
-environment variable. With both functions, the two functions together reserve 800
-of the account's 1{,}000 concurrent executions.
+environment variable. Together, the two functions reserve 800 of the account's
+1{,}000 concurrent executions.
 
 The first request after deployment returned 504. Both functions were cold: the
 Catalog reported 336\,ms of initialization, and the dependency 524\,ms of
@@ -255,6 +252,7 @@ as measured from the development laptop, so about 100\,ms was network time to
 us-east-2; this confirms the decision to generate load from an EC2 instance in
 the same region. After about two idle minutes, the first request took 124\,ms
 because the pooled HTTPS connection had been closed and had to be reopened.
+
 \subsection{Fault Switching and Test Separation}
 Lambda replaces every environment variable when its configuration is updated,
 so fault settings are switched by a helper (\texttt{orchestrate/fault\_config.py})
@@ -272,6 +270,8 @@ Tests that need the deployed stack carry a pytest marker and are excluded by
 default: \texttt{make test} runs the 46 unit tests in under a second without
 AWS, \texttt{make test-integration} runs the integration tests, and
 \texttt{make ct5} runs the calibration script.
+
+% =====================================================================
 \section{Architecture as Built}
 \todo{Final architecture and internal design figures; note any differences
 from midterm Figures 1 and 2.}
@@ -283,6 +283,7 @@ run; deviations from the midterm design.}
 
 % =====================================================================
 \section{Testing}
+
 \subsection{CT1: Normal Workflow}
 CT1 sends a warm-up request and reads the stock of product 42, then requests the
 product and places an order for two units through the deployed API. The product
@@ -359,15 +360,21 @@ limitations.}
 \textbf{Date} & \textbf{Change} & \textbf{Reason} \\
 \midrule
 Oct 30 & Milestone 1 (testbed, T1) moved from November 3 to November 8;
+  a setup phase (October 30 to November 1) was added. &
+  Implementation started on October 30, after the midterm submission, so the
+  first milestone was rescheduled; later milestones keep their dates. \\
+Nov 3 & Status mapping extended with 409 (passed through) and 502 (any other
+  client error from the dependency), in addition to the midterm's 200, 400, 404,
+  503, and 504. &
+  An order larger than the stock needs its own answer, and a rejected internal
+  call (for example 403 from a signing problem) is the service's own failure;
+  reporting it as a client error would hide it from the error rate. \\
 Nov 4 & The CT5 delay check measures median dependency latency from the
   duration Lambda reports, instead of the round trip from the development
   laptop. The 270--330\,ms band is unchanged. &
   The laptop path added a variable 0--60\,ms, so the same unchanged check
   failed once and passed once; the midterm criterion is defined on dependency
   latency. \\
-  a setup phase (October 30 to November 1) was added. &
-  Implementation started on October 30, after the midterm submission, so the
-  first milestone was rescheduled; later milestones keep their dates. \\
 \bottomrule
 \end{tabularx}
 \caption{Changes from the midterm plan.}
@@ -384,7 +391,7 @@ Nov 4 & The CT5 delay check measures median dependency latency from the
   \item The local interpreter can differ from the cloud runtime (Python 3.14
   locally, 3.12 in Lambda); pinning the project version avoids tests that pass
   locally but fail in Lambda.
-    \item AWS CLI profile names are case-sensitive: Terraform failed with
+  \item AWS CLI profile names are case-sensitive: Terraform failed with
   ``failed to get shared config profile'' because it asked for \texttt{b10}
   while the profile was named \texttt{B10}.
   \item Some changes cannot be made in place: renaming a DynamoDB table makes
@@ -398,21 +405,21 @@ Nov 4 & The CT5 delay check measures median dependency latency from the
   environment.
   \item Lambda bills the initialization phase of a cold start: billed duration
   equalled handler duration plus initialization time.
-    \item \texttt{aws lambda update-function-configuration --environment}
+  \item \texttt{aws lambda update-function-configuration --environment}
   replaces all environment variables rather than adding to them, so the
   orchestrator must merge the fault settings with the existing variables.
   \item A Lambda invocation reports two status codes: the invocation status
   (200 when the function ran) and the HTTP status the function returned (for
   example 503). Metrics must use the HTTP status seen by the client.
-    \item HTTP libraries can retry on their own (urllib3 does by default); left
+  \item HTTP libraries can retry on their own (urllib3 does by default); left
   enabled, these hidden retries would make the baseline configuration retry and
   invalidate the comparison, so they are disabled and tested.
   \item The first call after deployment combined a cold start and a new TLS
   connection and took about 19 times as long as warm calls.
-    \item In Python, \texttt{True} counts as an integer, so input validation
+  \item In Python, \texttt{True} counts as an integer, so input validation
   compares exact types; otherwise \texttt{"quantity": true} would be accepted
   as an order of one.
-    \item Initialization time in the \texttt{REPORT} line understates the full
+  \item Initialization time in the \texttt{REPORT} line understates the full
   cold-start cost: the first end-to-end request took about 350\,ms longer than
   the dependency's reported initialization and handler time, so client-side
   latency is the measure that matters for the SLO.
@@ -421,7 +428,7 @@ Nov 4 & The CT5 delay check measures median dependency latency from the
   discarded.
   \item Pooled connections are closed after a short idle period, which is one
   reason to discard a warm-up period before measuring.
-    \item A measurement taken from outside a system includes the path to it: the
+  \item A measurement taken from outside a system includes the path to it: the
   laptop round trip added a variable delay, and a check that passes or fails
   with nothing changed is measuring the wrong thing.
   \item Sample size decides what a test can detect: 100 calls cannot tell a
@@ -438,30 +445,29 @@ Nov 4 & The CT5 delay check measures median dependency latency from the
   \item Oct 30--31: Claude (Anthropic) produced the implementation plan and
   explained and provided the setup commands; I typed and ran each command and
   checked its output before continuing.
-    \item Nov 1: Claude provided and explained the Terraform files, Makefile,
+  \item Nov 1: Claude provided and explained the Terraform files, Makefile,
   seeder, and its tests; I typed and ran them, and diagnosed with Claude a
   profile-name mismatch (\texttt{B10} versus \texttt{b10}) and a table-naming
-  issue before committing.  
+  issue before committing.
   \item Nov 2--3: Claude provided and explained the dependency handler, its
   Terraform (role, policy, function URL), and the test events; I typed, deployed,
   and verified them, and fixed a Makefile variable error with Claude's help.
-    \item Nov 3: Claude provided and explained the fault-injection module, its
+  \item Nov 3: Claude provided and explained the fault-injection module, its
   tests, and the handler changes; I typed, tested, deployed, and verified them
   with a live 100\% failure check.
-    \item Nov 3: Claude provided and explained the dependency client, its unit
+  \item Nov 3: Claude provided and explained the dependency client, its unit
   tests with fakes, and the smoke check; I typed and ran them against the
   deployed function.
-    \item Nov 3: Claude provided and explained the Catalog API handler and its
+  \item Nov 3: Claude provided and explained the Catalog API handler and its
   tests, including CT2; I typed and ran them locally (43 tests passing).
-    \item Nov 4: Claude provided and explained the Catalog and API Gateway
+  \item Nov 4: Claude provided and explained the Catalog and API Gateway
   Terraform; I deployed it, ran the end-to-end checks, and analyzed the first
   cold-start timeout with Claude using both functions' logs.
-  \item Nov 4: Claude (Anthropic) provided the code for the fault-switching
-  helper, CT1, and the CT5 calibration script, and proposed the diagnosis when
-  the delay check failed. I typed and ran each step, ran the diagnosis
-  measurements, and reviewed their results before adopting the change to how
-  the delay check measures latency.
-
+  \item Nov 4: Claude provided and explained the fault-switching helper, CT1,
+  and the CT5 calibration script, and proposed the diagnosis when the delay
+  check failed. I typed and ran each step, ran the diagnosis measurements, and
+  reviewed their results before adopting the change to how the delay check
+  measures latency.
 \end{itemize}
 
 % =====================================================================
