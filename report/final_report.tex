@@ -225,6 +225,36 @@ product identifiers and eight invalid order bodies); each returns 400, and the
 test checks that the dependency client was never called. Further unit tests
 cover the success path and headers, the cold-start flag, the mapping of each
 dependency failure to its status code, and the log line. All 43 unit tests pass.
+\subsection{Catalog Deployment and First End-to-End Requests}
+The Catalog function (Python 3.12, 256\,MB, 5\,s timeout, reserved concurrency
+400) sits behind an API Gateway HTTP API with two routes,
+\texttt{GET /products/\{id\}} and \texttt{POST /orders}, a Lambda proxy
+integration (payload format 2.0), and an automatically deployed default stage.
+Two permissions connect the pieces: the Catalog's role may invoke only the
+dependency's function URL, and a resource-based policy allows only this API to
+invoke the Catalog. Terraform passes the dependency URL to the Catalog as an
+environment variable. With both functions, the two functions together reserve 800
+of the account's 1{,}000 concurrent executions.
+
+The first request after deployment returned 504. Both functions were cold: the
+Catalog reported 336\,ms of initialization, and the dependency 524\,ms of
+initialization plus 126\,ms of handler time. Together with creating the
+dependency's execution environment and opening a new HTTPS connection, this
+exceeded the 1{,}000\,ms per-attempt timeout, so the Catalog stopped waiting
+after 1{,}093\,ms. The failed request was still billed: 1{,}432\,ms in the
+Catalog and 651\,ms in the dependency. This is the effect that condition C2
+measures; in the Base configuration a cold dependency produces an error, while
+a retry would reach the now-warm dependency. The next request returned 200 with
+all diagnostic headers and the same environment identifier. Invalid identifiers
+returned 400 with \texttt{X-Attempts: 0} (no dependency call), an order
+returned 200, and a request to an undefined route was rejected by API Gateway
+itself without invoking the Catalog.
+
+Back-to-back warm requests took 17--30\,ms inside the Catalog but 128--146\,ms
+as measured from the development laptop, so about 100\,ms was network time to
+us-east-2; this confirms the decision to generate load from an EC2 instance in
+the same region. After about two idle minutes, the first request took 124\,ms
+because the pooled HTTPS connection had been closed and had to be reopened.
 \section{Architecture as Built}
 \todo{Final architecture and internal design figures; note any differences
 from midterm Figures 1 and 2.}
@@ -284,7 +314,8 @@ Oct 30 & Milestone 1 (testbed, T1) moved from November 3 to November 8;
   \item Some changes cannot be made in place: renaming a DynamoDB table makes
   Terraform destroy and recreate it (shown as \texttt{-/+} and
   ``forces replacement'' in the plan), which would lose data on a populated
-  table. Reading every plan before applying it is essential.  \item In a Makefile, an undefined variable silently becomes an empty string,
+  table. Reading every plan before applying it is essential.
+  \item In a Makefile, an undefined variable silently becomes an empty string,
   so a missing \texttt{PY := ...} line produced confusing errors instead of a
   clear message; the Makefile now calls the project interpreter
   (\texttt{.venv/bin/python}) directly so it works without activating the
@@ -305,6 +336,15 @@ Oct 30 & Milestone 1 (testbed, T1) moved from November 3 to November 8;
     \item In Python, \texttt{True} counts as an integer, so input validation
   compares exact types; otherwise \texttt{"quantity": true} would be accepted
   as an order of one.
+    \item Initialization time in the \texttt{REPORT} line understates the full
+  cold-start cost: the first end-to-end request took about 350\,ms longer than
+  the dependency's reported initialization and handler time, so client-side
+  latency is the measure that matters for the SLO.
+  \item A request that times out is still billed in every function it touched;
+  under cold starts the Base configuration pays for work whose result is
+  discarded.
+  \item Pooled connections are closed after a short idle period, which is one
+  reason to discard a warm-up period before measuring.
 \end{itemize}
 
 % =====================================================================
@@ -328,6 +368,10 @@ Oct 30 & Milestone 1 (testbed, T1) moved from November 3 to November 8;
   deployed function.
     \item Nov 3: Claude provided and explained the Catalog API handler and its
   tests, including CT2; I typed and ran them locally (43 tests passing).
+    \item Nov 4: Claude provided and explained the Catalog and API Gateway
+  Terraform; I deployed it, ran the end-to-end checks, and analyzed the first
+  cold-start timeout with Claude using both functions' logs.
+
 
 \end{itemize}
 
