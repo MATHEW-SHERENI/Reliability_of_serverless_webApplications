@@ -71,6 +71,12 @@ AWS provider for Terraform (pinned in lock file) & 6.71.0 \\
 Archive provider for Terraform (pinned in lock file) & 2.8.1 \\
 k6 (local tests) & 2.3.0 \\
 uv & 0.13.6 \\
+Nov 3 & Status mapping extended with 409 (passed through) and 502 (any other
+  client error from the dependency), in addition to the midterm's 200, 400, 404,
+  503, and 504. &
+  An order larger than the stock needs its own answer, and a rejected internal
+  call (for example 403 from a signing problem) is the service's own failure;
+  reporting it as a client error would hide it from the error rate. \\
 \bottomrule
 \end{tabular}
 \caption{Development tool versions.}
@@ -193,6 +199,32 @@ alone takes about 490\,ms, new dependency environments may approach the 1{,}000\
 per-attempt timeout under conditions C2 and C3;the analysis will separate such errors 
 from other causes using the dependency's initialization times.
 % =====================================================================
+\subsection{Catalog API Handler (M1)}
+The Catalog API function (\texttt{api/app.py}) receives HTTP API events for
+\texttt{GET /products/\{id\}} and \texttt{POST /orders}. It validates input
+before calling the dependency: product identifiers must be integers from 1 to
+1{,}000 and order quantities integers from 1 to 10, checked by exact type so
+that values such as \texttt{2.0}, \texttt{"2"}, or \texttt{true} are rejected.
+Outcomes are mapped to HTTP statuses: 200 on success; 400 for invalid input;
+404 and 409 passed through from the dependency (unknown product, insufficient
+stock); 502 for any other client error from the dependency, because that means
+the Catalog's own call was rejected; 504 when the dependency times out; 503 for
+dependency server errors or broken connections; and 500 for unexpected errors,
+whose details are logged. Every response carries the diagnostic headers
+\texttt{X-Cold-Start}, \texttt{X-Env-Id}, \texttt{X-Request-Id},
+\texttt{X-Attempts}, \texttt{X-Cache}, and, for product reads,
+\texttt{X-Data-Version}. \texttt{X-Request-Id} is Lambda's request identifier,
+the same one that appears in the \texttt{REPORT} log lines, so client-side
+records can be joined with billed duration and initialization time. Each
+request also writes one JSON log line. This version makes a single attempt
+without caching, which is the Base configuration; the reliability middleware
+(M2) is added later.
+
+Correctness test CT2 is implemented as 14 parametrized cases (six invalid
+product identifiers and eight invalid order bodies); each returns 400, and the
+test checks that the dependency client was never called. Further unit tests
+cover the success path and headers, the cold-start flag, the mapping of each
+dependency failure to its status code, and the log line. All 43 unit tests pass.
 \section{Architecture as Built}
 \todo{Final architecture and internal design figures; note any differences
 from midterm Figures 1 and 2.}
@@ -270,6 +302,9 @@ Oct 30 & Milestone 1 (testbed, T1) moved from November 3 to November 8;
   invalidate the comparison, so they are disabled and tested.
   \item The first call after deployment combined a cold start and a new TLS
   connection and took about 19 times as long as warm calls.
+    \item In Python, \texttt{True} counts as an integer, so input validation
+  compares exact types; otherwise \texttt{"quantity": true} would be accepted
+  as an order of one.
 \end{itemize}
 
 % =====================================================================
@@ -291,6 +326,8 @@ Oct 30 & Milestone 1 (testbed, T1) moved from November 3 to November 8;
     \item Nov 3: Claude provided and explained the dependency client, its unit
   tests with fakes, and the smoke check; I typed and ran them against the
   deployed function.
+    \item Nov 3: Claude provided and explained the Catalog API handler and its
+  tests, including CT2; I typed and ran them locally (43 tests passing).
 
 \end{itemize}
 
