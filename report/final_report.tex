@@ -255,6 +255,23 @@ as measured from the development laptop, so about 100\,ms was network time to
 us-east-2; this confirms the decision to generate load from an EC2 instance in
 the same region. After about two idle minutes, the first request took 124\,ms
 because the pooled HTTPS connection had been closed and had to be reopened.
+\subsection{Fault Switching and Test Separation}
+Lambda replaces every environment variable when its configuration is updated,
+so fault settings are switched by a helper (\texttt{orchestrate/fault\_config.py})
+that reads the current variables, resets all seven fault variables to their
+healthy values, applies the new settings, writes the full set back, and waits
+until Lambda reports the update as complete. Resetting first prevents a setting
+from a previous mode, such as a 300\,ms delay, from silently staying active in
+the next one, and unknown setting names are rejected, so a typing mistake cannot
+pass unnoticed. The merge is a pure function covered by three unit tests, and the
+orchestrator (M6) will reuse the helper. Because every switch ends on the values
+Terraform deployed, \texttt{terraform plan} reports no changes after a
+calibration run.
+
+Tests that need the deployed stack carry a pytest marker and are excluded by
+default: \texttt{make test} runs the 46 unit tests in under a second without
+AWS, \texttt{make test-integration} runs the integration tests, and
+\texttt{make ct5} runs the calibration script.
 \section{Architecture as Built}
 \todo{Final architecture and internal design figures; note any differences
 from midterm Figures 1 and 2.}
@@ -266,7 +283,60 @@ run; deviations from the midterm design.}
 
 % =====================================================================
 \section{Testing}
-\todo{Results of correctness tests CT1--CT7 (and T4/T5 tests if built).}
+\subsection{CT1: Normal Workflow}
+CT1 sends a warm-up request and reads the stock of product 42, then requests the
+product and places an order for two units through the deployed API. The product
+request returned status 200 with all six diagnostic headers, and the order
+returned status 200 with an order identifier. The test then checks the database
+itself rather than the API's reply: a consistent read showed the stock exactly
+two units lower, and the order row was stored with the correct product and
+quantity. The warm-up request keeps CT1 about the normal path; cold starts are
+measured by condition C2. CT1 passed. CT2 (invalid input) is covered by the unit
+tests of the Catalog API handler.
+
+\subsection{CT5: Fault Injector Calibration}
+The calibration script switches the dependency through three fault modes and
+always restores the healthy settings at the end, even after an error.
+Table~\ref{tab:ct5} gives the final run. The transient check uses 10{,}000 calls
+because the standard error of a measured 10\% rate is about 3 percentage points
+at 100 calls but only 0.3 points at 10{,}000, so the 9--11\% band is wide enough
+for random variation and narrow enough to detect a wrong rate. Over three runs
+the rate was 9.95\%, 9.86\%, and 10.35\%. The outage check counts only calls that
+fell entirely more than one second inside or outside the window, because the
+moment the dependency made its decision lies somewhere within each call and the
+two clocks can differ slightly; the exact edges are covered by unit tests.
+
+\begin{table}[h]
+\centering
+\footnotesize
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Check} & \textbf{Criterion} & \textbf{Measured} & \textbf{Result} \\
+\midrule
+Transient 10\% & 9--11\% injected 503s & 1{,}035 of 10{,}000 (10.35\%) & Pass \\
+Delay +300\,ms & median +270--330\,ms & 12.8 to 305.9\,ms (+293.1\,ms) & Pass \\
+Outage 10--20\,s & all inside fail, none outside & 197/197 failed, 668/668 succeeded & Pass \\
+\bottomrule
+\end{tabular}
+\caption{CT5 calibration results (final run, November 4).}
+\label{tab:ct5}
+\end{table}
+
+The first version of the delay check measured the round trip from the
+development laptop and failed, at +361\,ms. A diagnosis run separated the
+possible causes. Lambda's own reported duration showed a median of 9.6 to
+14.6\,ms in every healthy environment and 305.1 to 311.1\,ms in every delayed
+one, so the injector itself adds about 293\,ms. On the laptop, one thread and ten
+threads both measured +301\,ms in that run, which rules out concurrency, but the
+delayed calls showed a second, slower cluster about 60\,ms higher whose share
+varied between runs. Run unchanged, the same laptop-based check later passed at
++300\,ms, so its verdict depended on the network path rather than on the
+injector. Because the midterm criterion is defined on dependency latency, the
+check now uses the median duration that Lambda reports for each phase and prints
+the laptop round trip for information only. CT5 passed, which completes the T1
+criterion together with CT1.
+
+\todo{CT3, CT4, CT6, CT7 after the reliability mechanisms are built.}
 
 % =====================================================================
 \section{Results}
@@ -289,6 +359,12 @@ limitations.}
 \textbf{Date} & \textbf{Change} & \textbf{Reason} \\
 \midrule
 Oct 30 & Milestone 1 (testbed, T1) moved from November 3 to November 8;
+Nov 4 & The CT5 delay check measures median dependency latency from the
+  duration Lambda reports, instead of the round trip from the development
+  laptop. The 270--330\,ms band is unchanged. &
+  The laptop path added a variable 0--60\,ms, so the same unchanged check
+  failed once and passed once; the midterm criterion is defined on dependency
+  latency. \\
   a setup phase (October 30 to November 1) was added. &
   Implementation started on October 30, after the midterm submission, so the
   first milestone was rescheduled; later milestones keep their dates. \\
@@ -345,6 +421,15 @@ Oct 30 & Milestone 1 (testbed, T1) moved from November 3 to November 8;
   discarded.
   \item Pooled connections are closed after a short idle period, which is one
   reason to discard a warm-up period before measuring.
+    \item A measurement taken from outside a system includes the path to it: the
+  laptop round trip added a variable delay, and a check that passes or fails
+  with nothing changed is measuring the wrong thing.
+  \item Sample size decides what a test can detect: 100 calls cannot tell a
+  10\% fault rate from 7\% or 13\%, while 10{,}000 calls can.
+  \item Switching configurations must start from a known state, or a setting
+  from the previous mode remains active and two faults are tested at once.
+  \item CloudWatch log lines arrive a few seconds late, so a query must check
+  that all expected lines are present before computing a statistic from them.
 \end{itemize}
 
 % =====================================================================
@@ -371,7 +456,11 @@ Oct 30 & Milestone 1 (testbed, T1) moved from November 3 to November 8;
     \item Nov 4: Claude provided and explained the Catalog and API Gateway
   Terraform; I deployed it, ran the end-to-end checks, and analyzed the first
   cold-start timeout with Claude using both functions' logs.
-
+  \item Nov 4: Claude (Anthropic) provided the code for the fault-switching
+  helper, CT1, and the CT5 calibration script, and proposed the diagnosis when
+  the delay check failed. I typed and ran each step, ran the diagnosis
+  measurements, and reviewed their results before adopting the change to how
+  the delay check measures latency.
 
 \end{itemize}
 
