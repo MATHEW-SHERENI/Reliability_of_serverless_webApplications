@@ -22,3 +22,8 @@ seed:
 
 test:
 	$(PY) -m pytest -q
+test-integration:
+	$(PY) -m pytest -m integration -v
+
+ct5:
+	$(PY) tests/integration/ct5_fault_calibration.py
