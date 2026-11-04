@@ -8,18 +8,26 @@ import base64
 import json
 import os
 import re
+import random
+import time
 import uuid
 from datetime import datetime, timezone
 
 import boto3
 from botocore.exceptions import ClientError
+from faults import FaultConfig, decide_fault
 
 PRODUCTS_TABLE = os.environ["PRODUCTS_TABLE"]
 ORDERS_TABLE = os.environ["ORDERS_TABLE"]
 
 # Created once per execution environment and reused while it stays warm.
 _dynamodb = boto3.client("dynamodb")
-
+# Fault settings are read once per execution environment (at cold start).
+FAULTS = FaultConfig.from_env(os.environ)
+RUN_ID = os.environ.get("RUN_ID", "none")
+ENV_ID = str(uuid.uuid4())
+# Each environment gets its own random stream, seeded from the run's seed.
+_rng = random.Random(f"{os.environ.get('FAULT_SEED', '5360')}-{ENV_ID}")
 ITEM_PATH = re.compile(r"^/items/(\d+)$")
 
 
@@ -92,8 +100,25 @@ def reserve(body):
     return response(200, {"order_id": order_id, "product_id": product_id,
                           "quantity": quantity})
 
-
+def log_fault(fault):
+    """One JSON line per injected fault: the ground truth for later analysis."""
+    print(json.dumps({
+        "type": "fault",
+        "run_id": RUN_ID,
+        "env_id": ENV_ID,
+        "mode": FAULTS.mode,
+        "failed": fault.fail,
+        "delay_ms": fault.delay_ms,
+        "at": time.time(),
+    }))
 def handler(event, context):
+    fault = decide_fault(time.time(), _rng, FAULTS)
+    if fault.fail or fault.delay_ms:
+        log_fault(fault)
+    if fault.delay_ms:
+        time.sleep(fault.delay_ms / 1000)
+    if fault.fail:
+        return response(503, {"error": "injected fault"})
     """Entry point: route the request by method and path."""
     method = event["requestContext"]["http"]["method"]
     path = event.get("rawPath", "/")

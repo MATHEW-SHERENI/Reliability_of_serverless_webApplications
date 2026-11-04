@@ -71,6 +71,14 @@ resource "aws_lambda_function" "dependency" {
     variables = {
       PRODUCTS_TABLE = aws_dynamodb_table.products.name
       ORDERS_TABLE   = aws_dynamodb_table.orders.name
+      FAULT_MODE           = "none"
+      FAULT_RATE           = "0"
+      FAULT_DELAY_MS       = "0"
+      FAULT_OUTAGE_START_S = "0"
+      FAULT_OUTAGE_END_S   = "0"
+      RUN_START            = "0"
+      FAULT_SEED           = "5360"
+      RUN_ID               = "none"
     }
   }
 
