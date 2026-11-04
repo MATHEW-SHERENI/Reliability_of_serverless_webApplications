@@ -181,14 +181,17 @@ layer to cover success, signing, the timeout, each error class, and the request
 body without any network access.
 
 A smoke check from the development laptop called the deployed function URL
-three times. The first call took 956\,ms and the next two 51 and 78\,ms. The
-difference has two causes: the dependency function had just been deployed, so
-the first call included a cold start, and the client had to open a new HTTPS
-connection, while the later calls reused the pooled connection. Because a cold
-start of the dependency alone takes about 490\,ms, new dependency environments
-may approach the 1{,}000\,ms per-attempt timeout under conditions C2 and C3;
-the analysis will separate such errors from other causes using the dependency's
-initialization times.
+three times. The first call took 956\,ms and the next two 51 and 78\,ms.The 
+dependency's own log confirms the cause. All four calls were served by the
+same execution environment; the first reported 476\,ms of initialization plus
+127\,ms of handler time, because its own first DynamoDB call also opened a new
+connection, while the next two took 9 and 7\,ms. The remaining difference
+(about 350\,ms on the first call and 40\,ms on warm calls) is network time from
+the laptop to us-east-2, including a new HTTPS connection for the first call;
+later calls reused the pooled connection.Because a cold start of the dependency 
+alone takes about 490\,ms, new dependency environments may approach the 1{,}000\,ms 
+per-attempt timeout under conditions C2 and C3;the analysis will separate such errors 
+from other causes using the dependency's initialization times.
 % =====================================================================
 \section{Architecture as Built}
 \todo{Final architecture and internal design figures; note any differences
