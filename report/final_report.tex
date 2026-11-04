@@ -142,6 +142,29 @@ reported an initialization time of 487\,ms, and its billed duration (635\,ms)
 included that initialization as well as the 147\,ms handler run. Cold starts
 therefore add cost as well as latency, which the cost model captures because it
 uses billed duration.
+\subsection{Fault Injector (M4)}
+Faults are decided by a pure function, \texttt{decide\_fault(time, random
+generator, configuration)} in \texttt{dep/faults.py}, and carried out by the
+handler, which sleeps for an injected delay or returns 503 for an injected
+failure. Four modes correspond to the conditions in midterm Table~4:
+\texttt{none} (C1--C3), \texttt{transient} with a failure probability (C4),
+\texttt{delay} with a fixed extra latency (C5, C6), and \texttt{outage} with a
+time window measured from the start of the run (C7); the window includes its
+start and excludes its end. The configuration is read from environment variables
+at cold start and validated, so an unknown mode or an invalid value makes the
+function fail loudly instead of silently running as a baseline. Each execution
+environment draws from its own random stream, seeded from the run seed and its
+environment identifier, so faults are independent across environments. The
+exact sequence of failed calls cannot be replayed, because Lambda chooses which
+environment serves each request, but the fault process (rate, delay, and window)
+is fixed. Every injected fault is logged as one JSON line with the run,
+environment, mode, and time, which serves as the ground truth described in
+midterm Section~4.5.
+
+Ten unit tests cover all modes, the edges of the outage window, and four invalid
+configurations. In a live check with a 100\% failure rate, the function returned
+503 and logged the fault; Terraform then detected the manual configuration
+change as drift and restored the healthy settings.
 
 % =====================================================================
 \section{Architecture as Built}
@@ -210,6 +233,12 @@ Oct 30 & Milestone 1 (testbed, T1) moved from November 3 to November 8;
   environment.
   \item Lambda bills the initialization phase of a cold start: billed duration
   equalled handler duration plus initialization time.
+    \item \texttt{aws lambda update-function-configuration --environment}
+  replaces all environment variables rather than adding to them, so the
+  orchestrator must merge the fault settings with the existing variables.
+  \item A Lambda invocation reports two status codes: the invocation status
+  (200 when the function ran) and the HTTP status the function returned (for
+  example 503). Metrics must use the HTTP status seen by the client.
 \end{itemize}
 
 % =====================================================================
@@ -225,7 +254,9 @@ Oct 30 & Milestone 1 (testbed, T1) moved from November 3 to November 8;
   \item Nov 2--3: Claude provided and explained the dependency handler, its
   Terraform (role, policy, function URL), and the test events; I typed, deployed,
   and verified them, and fixed a Makefile variable error with Claude's help.
-
+    \item Nov 3: Claude provided and explained the fault-injection module, its
+  tests, and the handler changes; I typed, tested, deployed, and verified them
+  with a live 100\% failure check.
 
 \end{itemize}
 
