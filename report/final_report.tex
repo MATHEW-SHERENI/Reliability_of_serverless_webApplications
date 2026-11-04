@@ -166,6 +166,29 @@ configurations. In a live check with a 100\% failure rate, the function returned
 503 and logged the fault; Terraform then detected the manual configuration
 change as drift and restored the healthy settings.
 
+\subsection{Dependency Client (M3)}
+The Catalog API calls the dependency through \texttt{api/dep\_client.py}. Each
+request is signed with AWS Signature Version~4, because the function URL accepts
+only IAM-authorized calls, and is sent through a urllib3 connection pool that is
+created once per execution environment and reused while it stays warm. The caller
+passes a per-attempt timeout, which bounds the whole attempt. Failures are mapped
+to three error classes that state whether a retry could help: timeouts and 5xx
+responses or broken connections are retryable, while 4xx responses (such as 404
+or 409) are not, matching the retry rules of M2. Automatic retries in urllib3
+are disabled and a unit test checks this, so that every retry in the study is
+made, and counted, by the retry policy itself. Six unit tests use a fake HTTP
+layer to cover success, signing, the timeout, each error class, and the request
+body without any network access.
+
+A smoke check from the development laptop called the deployed function URL
+three times. The first call took 956\,ms and the next two 51 and 78\,ms. The
+difference has two causes: the dependency function had just been deployed, so
+the first call included a cold start, and the client had to open a new HTTPS
+connection, while the later calls reused the pooled connection. Because a cold
+start of the dependency alone takes about 490\,ms, new dependency environments
+may approach the 1{,}000\,ms per-attempt timeout under conditions C2 and C3;
+the analysis will separate such errors from other causes using the dependency's
+initialization times.
 % =====================================================================
 \section{Architecture as Built}
 \todo{Final architecture and internal design figures; note any differences
@@ -239,6 +262,11 @@ Oct 30 & Milestone 1 (testbed, T1) moved from November 3 to November 8;
   \item A Lambda invocation reports two status codes: the invocation status
   (200 when the function ran) and the HTTP status the function returned (for
   example 503). Metrics must use the HTTP status seen by the client.
+    \item HTTP libraries can retry on their own (urllib3 does by default); left
+  enabled, these hidden retries would make the baseline configuration retry and
+  invalidate the comparison, so they are disabled and tested.
+  \item The first call after deployment combined a cold start and a new TLS
+  connection and took about 19 times as long as warm calls.
 \end{itemize}
 
 % =====================================================================
@@ -257,6 +285,9 @@ Oct 30 & Milestone 1 (testbed, T1) moved from November 3 to November 8;
     \item Nov 3: Claude provided and explained the fault-injection module, its
   tests, and the handler changes; I typed, tested, deployed, and verified them
   with a live 100\% failure check.
+    \item Nov 3: Claude provided and explained the dependency client, its unit
+  tests with fakes, and the smoke check; I typed and ran them against the
+  deployed function.
 
 \end{itemize}
 
