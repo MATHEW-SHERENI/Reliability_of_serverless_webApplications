@@ -42,8 +42,18 @@ CSCI 5360 Web Technologies, Fall 2026 \quad December 10, 2026
 
 % =====================================================================
 \section{Assigned Project and Final Scope}
-\todo{Objective as delivered; which of tasks T1--T5 were completed, each
-with its completion criterion and evidence (commit, test, or figure).}
+\textbf{T1 (testbed), completed November 4.} The catalog API, the simulated
+dependency with its fault injector, and all supporting resources are defined in
+Terraform; \texttt{make deploy} creates the 18 resources in us-east-2 and
+\texttt{make destroy} removes them. The completion criterion is met: at a 10\%
+setting, CT5 measured 10.35\% injected failures over 10{,}000 calls, and a
+300\,ms setting raised median dependency latency by 293\,ms
+(Section~\ref{sec:testing}). CT1 and CT2 also pass, and a deployment from a
+fresh clone of the repository succeeded. The code is tagged
+\texttt{v0.1-testbed}.
+
+\todo{Objective as delivered; status of T2--T5 with completion criteria and
+evidence.}
 
 % =====================================================================
 \section{Implementation}
@@ -282,7 +292,7 @@ from midterm Figures 1 and 2.}
 run; deviations from the midterm design.}
 
 % =====================================================================
-\section{Testing}
+\section{Testing}\label{sec:testing}
 
 \subsection{CT1: Normal Workflow}
 CT1 sends a warm-up request and reads the stock of product 42, then requests the
@@ -336,6 +346,16 @@ injector. Because the midterm criterion is defined on dependency latency, the
 check now uses the median duration that Lambda reports for each phase and prints
 the laptop round trip for information only. CT5 passed, which completes the T1
 criterion together with CT1.
+
+\subsection{Reproducibility from a Clean Copy}
+To check that the repository alone is enough to rebuild the testbed, it was
+cloned into an empty folder and only the quick-start commands from the README
+were run. uv created the Python 3.12.16 environment and installed the pinned
+test dependencies, Terraform installed the AWS (6.71.0) and archive (2.8.1)
+providers from the committed lock file, and \texttt{make deploy} created all 18
+resources. After seeding, the 46 unit tests and CT1 passed, and
+\texttt{make destroy} removed the stack from the same folder, which holds its
+Terraform state.
 
 \todo{CT3, CT4, CT6, CT7 after the reliability mechanisms are built.}
 
@@ -437,6 +457,14 @@ Nov 4 & The CT5 delay check measures median dependency latency from the
   from the previous mode remains active and two faults are tested at once.
   \item CloudWatch log lines arrive a few seconds late, so a query must check
   that all expected lines are present before computing a statistic from them.
+  \item Terraform state belongs to one folder: a second clone starts with an
+  empty state and would try to create resources that already exist, and
+  deleting a folder before destroying its stack leaves resources that no
+  Terraform configuration knows about.
+  \item The Python scripts found AWS credentials through the shell's settings
+  (\texttt{AWS\_PROFILE} exported in the developer's terminal) rather than
+  through the repository, so the Makefile now sets the profile explicitly and
+  the commands no longer depend on how a terminal is configured.
 \end{itemize}
 
 % =====================================================================
@@ -468,6 +496,9 @@ Nov 4 & The CT5 delay check measures median dependency latency from the
   check failed. I typed and ran each step, ran the diagnosis measurements, and
   reviewed their results before adopting the change to how the delay check
   measures latency.
+  \item Nov 4: Claude wrote the README and the fresh-clone test procedure and
+  corrected the Makefile; I reviewed the README, ran the procedure in a clean
+  folder, and tagged the milestone.
 \end{itemize}
 
 % =====================================================================

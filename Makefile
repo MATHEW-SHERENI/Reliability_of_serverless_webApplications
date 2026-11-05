@@ -3,7 +3,13 @@
 
 TF := terraform -chdir=infra
 PY := .venv/bin/python
-.PHONY: init plan deploy destroy seed test
+
+# Use the B10 profile unless the caller sets AWS_PROFILE; export it so boto3,
+# the AWS CLI, and Terraform all use the same credentials.
+AWS_PROFILE ?= B10
+export AWS_PROFILE
+
+.PHONY: init plan deploy destroy seed test test-integration ct5
 
 init:
 	$(TF) init
@@ -22,6 +28,7 @@ seed:
 
 test:
 	$(PY) -m pytest -q
+
 test-integration:
 	$(PY) -m pytest -m integration -v
 
