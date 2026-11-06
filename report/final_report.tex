@@ -281,6 +281,29 @@ default: \texttt{make test} runs the 46 unit tests in under a second without
 AWS, \texttt{make test-integration} runs the integration tests, and
 \texttt{make ct5} runs the calibration script.
 
+\subsection{Reliability Middleware: Contract and Tests First (M2)}
+Work on the reliability mechanisms (T2) began with a contract rather than code:
+\texttt{api/reliability.py} fixes the names, arguments, and rules of the retry
+policy and the cache, and every function in it still raises
+\texttt{NotImplementedError}. The retry policy, \texttt{call\_with\_retry(call,
+clock, rng)}, receives the dependency call as an ordinary function that either
+returns a value or raises an error, and retries only errors marked retryable by
+the dependency client (server errors, timeouts, broken connections). It makes at
+most four attempts, gives each a timeout of 1{,}000\,ms or the time left before
+the 3{,}000\,ms deadline, whichever is smaller, starts no attempt with less than
+50\,ms left, and reports the number of attempts on success and on failure, for
+the \texttt{X-Attempts} header and the retry-overhead metric. The cache,
+\texttt{TTLCache(clock)}, stores values with the time they were written. The
+clock and the random generator are passed in, as in the fault injector, so tests
+can replace them.
+
+Writing the tests first made two open points in the midterm specification
+explicit. The backoff formula $U(0, \min(1000, 100 \cdot 2^{n}))$\,ms did not
+define $n$ for the first retry; I chose $n = 1, 2, 3$, so the sleep before the
+three retries is at most 200, 400, and 800\,ms. A cache entry written at time
+$t$ is served while the clock reads less than $t + 60$\,s, so at exactly 60\,s
+it is a miss, matching the outage window, which also excludes its end.
+
 % =====================================================================
 \section{Architecture as Built}
 \todo{Final architecture and internal design figures; note any differences
@@ -357,7 +380,38 @@ resources. After seeding, the 46 unit tests and CT1 passed, and
 \texttt{make destroy} removed the stack from the same folder, which holds its
 Terraform state.
 
-\todo{CT3, CT4, CT6, CT7 after the reliability mechanisms are built.}
+\subsection{CT3 and CT4: Written Before the Implementation}
+As planned in midterm Section~7, the tests for the retry policy and the cache
+were written from the specification before the implementation, which is the
+task delegated to an AI agent, so that the agent's code is checked against
+expectations it did not write. The tests replace time with a fake clock: a
+sleep is recorded and moves the clock forward instantly, so a case that waits
+three seconds runs in microseconds and every wait can be inspected. A scripted
+fake dependency plays a fixed sequence of answers (for example, two 503 errors
+and then a product), and can also simulate a call that never answers by using
+up its whole timeout and then raising a timeout. CT3 checks success on the third
+attempt, a stop after four attempts, no retry of a client error, the deadline
+and timeout rules for a call that never answers, and the jitter bounds over
+1{,}000 random seeds. CT4 checks a miss before any write, a hit at 59\,s, and a
+miss at 60 and 61\,s. The two remaining parts of CT4 (no dependency call on a
+hit, and \texttt{POST} never cached) belong to the request handler and will be
+tested when the cache is connected to it.
+
+Until the implementation exists, the nine tests are marked as expected
+failures, but only for \texttt{NotImplementedError}, so a mistake in a test
+itself still appears as a real failure; \texttt{make test} reports 46 passed and
+9 expected failures. To check that the tests can detect wrong code, they were
+also run against four deliberately incorrect implementations: no jitter, the
+backoff numbered from $n = 0$, jitter limited to the upper half of the range,
+and timeouts treated as final. All four passed the first version of the tests.
+Two additions closed the gaps: the jitter test now requires the sleeps over
+1{,}000 seeds to reach above 90\% and below 10\% of each bound, and the
+never-answering case requires exactly three attempts, which follows from the
+rules for any seed, with the last timeout cut short to end at the deadline.
+With these additions, all four incorrect versions fail and a correct
+implementation passes.
+
+\todo{CT3 and CT4 results after the implementation; CT6 and CT7.}
 
 % =====================================================================
 \section{Results}
@@ -395,6 +449,16 @@ Nov 4 & The CT5 delay check measures median dependency latency from the
   The laptop path added a variable 0--60\,ms, so the same unchanged check
   failed once and passed once; the midterm criterion is defined on dependency
   latency. \\
+Nov 5 & Backoff exponent defined as $n = 1, 2, 3$ for the three retries
+  (sleep ceilings 200, 400, 800\,ms); a cache entry expires at exactly 60\,s. &
+  The midterm formula did not define $n$ for the first retry, and CT4 tested
+  only 59 and 61\,s; tests written first must state both precisely. \\
+Nov 5 & CT3 and CT4 were written by me with Claude providing the test helpers
+  (fake clock, scripted dependency), the first test as a worked example, and
+  two review fixes, rather than entirely by me. &
+  The independence promised in midterm Section~7 rests on the expected
+  values, which come from my specification and decisions; the helpers carry no
+  expectations. \\
 \bottomrule
 \end{tabularx}
 \caption{Changes from the midterm plan.}
@@ -465,6 +529,14 @@ Nov 4 & The CT5 delay check measures median dependency latency from the
   (\texttt{AWS\_PROFILE} exported in the developer's terminal) rather than
   through the repository, so the Makefile now sets the profile explicitly and
   the commands no longer depend on how a terminal is configured.
+  \item Writing tests before code forces the specification to be exact: two
+  details that looked settled in the midterm (the first backoff exponent and
+  the cache expiry instant) had to be decided before a test could be written.
+  \item A passing test suite is not necessarily a strong one: the first
+  version of CT3 also passed four deliberately wrong implementations, and
+  running tests against such mutants showed which checks were missing.
+  \item Replacing the clock with a fake makes time-based tests instant and
+  repeatable, and lets a test inspect every wait the code makes.
 \end{itemize}
 
 % =====================================================================
@@ -499,6 +571,12 @@ Nov 4 & The CT5 delay check measures median dependency latency from the
   \item Nov 4: Claude wrote the README and the fresh-clone test procedure and
   corrected the Makefile; I reviewed the README, ran the procedure in a clean
   folder, and tagged the milestone.
+  \item Nov 5: Claude proposed the interface of \texttt{reliability.py},
+  explained the fake-clock technique on a separate example, and wrote the test
+  helpers and the first CT3 test. I chose the two open details of the
+  specification and wrote the other eight tests. Claude's review ran them
+  against four deliberately wrong implementations, found two gaps, and supplied
+  the fixes, which I reviewed and applied.
 \end{itemize}
 
 % =====================================================================
