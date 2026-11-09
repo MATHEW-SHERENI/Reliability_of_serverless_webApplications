@@ -304,6 +304,37 @@ three retries is at most 200, 400, and 800\,ms. A cache entry written at time
 $t$ is served while the clock reads less than $t + 60$\,s, so at exactly 60\,s
 it is a miss, matching the outage window, which also excludes its end.
 
+\subsection{Retry Policy and Cache Implementation (Delegated Task)}
+The implementation of \texttt{reliability.py} was the development task
+delegated to an AI agent (Claude), as planned in midterm Section~7. The retry
+policy is a loop over at most four attempts. Each attempt receives a timeout of
+1\,s or the time left before the deadline, whichever is smaller. When an
+attempt fails, the error is given its attempt count and raised again at once if
+it is not marked retryable or if it was the fourth attempt; otherwise a delay is
+drawn from $U(0, \min(1000, 100 \cdot 2^{n}))$\,ms, where $n$ is the number of
+the failed attempt, and the policy stops instead of sleeping when the delay would
+leave less than 50\,ms before the deadline. Raising the original error keeps the
+handler's status mapping (504, 503, 502) unchanged. The cache stores each value
+with its expiry time and drops expired entries when they are read; it needs no
+locking because an execution environment handles one request at a time, and it
+holds at most the 1{,}000 products.
+
+I accepted the implementation on three kinds of evidence. First, all nine CT3
+and CT4 tests, written before the code existed, pass. Second, an independent
+statistical check drove the policy with a dependency that always fails until
+10{,}002 backoff delays had been collected: none fell outside its bound, the
+mean delays before the three retries were 99.2, 200.6, and 402.2\,ms against
+the 100, 200, and 400\,ms expected for full jitter, and each tenth of every
+range received between 292 and 364 of about 3{,}334 delays, as uniform jitter
+predicts. Third, I reviewed the code line by line. Two points from the review:
+the failed attempt's own number is passed to the backoff formula because the
+first call is attempt 1 and its failure leads to retry 1, so passing one less
+would give the 100, 200, 400\,ms ceilings that the jitter test rejects; and an
+unexpected error such as a \texttt{KeyError} from a programming bug is caught
+but has no retryable flag, so it is raised after a single attempt, since a bug
+fails the same way every time and retrying would only multiply the latency and
+cost before the same error.
+
 % =====================================================================
 \section{Architecture as Built}
 \todo{Final architecture and internal design figures; note any differences
@@ -411,7 +442,14 @@ rules for any seed, with the last timeout cut short to end at the deadline.
 With these additions, all four incorrect versions fail and a correct
 implementation passes.
 
-\todo{CT3 and CT4 results after the implementation; CT6 and CT7.}
+After the implementation was added on November 8, all nine tests passed
+(\texttt{make test}: 55 passed), and the expected-failure marker was removed.
+Because the marker was strict, the first test run after the implementation
+reported the nine passing tests as failures until the marker was deleted, so it
+could not be left behind by mistake.
+
+\todo{CT4 handler checks (no dependency call on a hit, \texttt{POST} never
+cached) after the cache is connected to the handler; CT6 and CT7.}
 
 % =====================================================================
 \section{Results}
@@ -459,6 +497,10 @@ Nov 5 & CT3 and CT4 were written by me with Claude providing the test helpers
   The independence promised in midterm Section~7 rests on the expected
   values, which come from my specification and decisions; the helpers carry no
   expectations. \\
+Nov 8 & The agent also implemented the cache (\texttt{TTLCache}), which is in
+  the same file, not only the retry policy named as the delegated task. &
+  Both live in \texttt{reliability.py}; the cache was checked by the four CT4
+  tests written beforehand and reviewed with the retry policy. \\
 \bottomrule
 \end{tabularx}
 \caption{Changes from the midterm plan.}
@@ -537,6 +579,12 @@ Nov 5 & CT3 and CT4 were written by me with Claude providing the test helpers
   running tests against such mutants showed which checks were missing.
   \item Replacing the clock with a fake makes time-based tests instant and
   repeatable, and lets a test inspect every wait the code makes.
+  \item A strict expected-failure marker turns into a failure once the code
+  works, so a temporary marker cannot be forgotten.
+  \item Randomized behaviour needs a statistical check besides bounds: every
+  delay can lie within its bound while the distribution is still wrong, so the
+  sampling check also compares the mean and the spread with what full jitter
+  predicts.
 \end{itemize}
 
 % =====================================================================
@@ -577,6 +625,11 @@ Nov 5 & CT3 and CT4 were written by me with Claude providing the test helpers
   specification and wrote the other eight tests. Claude's review ran them
   against four deliberately wrong implementations, found two gaps, and supplied
   the fixes, which I reviewed and applied.
+  \item Nov 8: Claude implemented the retry policy and the cache in
+  \texttt{reliability.py} (the delegated task) and wrote the 10{,}000-sample
+  backoff check. I ran the tests and the check, reviewed the code line by line,
+  and answered two review questions on the backoff numbering and on unexpected
+  errors; Claude corrected my description of how the second case is handled.
 \end{itemize}
 
 % =====================================================================

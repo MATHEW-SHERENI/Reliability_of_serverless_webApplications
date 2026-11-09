@@ -24,11 +24,6 @@ from dep_client import (
     DependencyTimeout,
 )
 
-pytestmark = pytest.mark.xfail(
-    raises=NotImplementedError,
-    strict=True,
-    reason="reliability.py is implemented on Day 11",
-)
 
 PRODUCT = {"product_id": 42, "name": "Product 0042"}
 EPS = 1e-9  # Margin for floating-point sums of seconds.

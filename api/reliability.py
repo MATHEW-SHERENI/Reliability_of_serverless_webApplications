@@ -1,13 +1,13 @@
 """M2 reliability middleware: retry policy and per-environment TTL cache.
 
-Day 10: contract only (names, arguments, rules). The tests in
-tests/unit/test_reliability.py are written against this contract first;
-the implementation follows on Day 11. Standard library only.
+The contract (names, arguments, rules) and the tests in
+tests/unit/test_reliability.py were written first, on Day 10; this
+implementation was added on Day 11 and must pass them. Standard library only.
 """
 import time
 
 MAX_ATTEMPTS = 4            # 1 attempt + at most 3 retries
-BASE_MS = 100               # backoff ceiling for the first retry
+BASE_MS = 100               # base of the backoff; ceiling before retry n is BASE_MS * 2**n
 CAP_MS = 1000               # backoff ceiling never exceeds this
 ATTEMPT_TIMEOUT_MS = 1000   # per-attempt timeout, shortened near the deadline
 MIN_REMAINING_MS = 50       # no attempt starts with less time than this left
@@ -34,6 +34,11 @@ class RetryResult:
         self.attempts = attempts
 
 
+def backoff_ceiling_s(n):
+    """Upper bound of the sleep before retry n (n = 1, 2, 3), in seconds."""
+    return min(CAP_MS, BASE_MS * 2**n) / 1000
+
+
 def call_with_retry(call, clock, rng, deadline_ms=DEADLINE_MS):
     """Call call(timeout_s) until it succeeds, following the M2 retry rules.
 
@@ -51,7 +56,23 @@ def call_with_retry(call, clock, rng, deadline_ms=DEADLINE_MS):
     Returns RetryResult(value, attempts) on success. On final failure it raises
     the last exception, with an `attempts` attribute set to the number of calls.
     """
-    raise NotImplementedError
+    deadline = clock.now() + deadline_ms / 1000
+    min_remaining = MIN_REMAINING_MS / 1000
+
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        time_left = deadline - clock.now()
+        timeout_s = min(ATTEMPT_TIMEOUT_MS / 1000, time_left)
+        try:
+            return RetryResult(call(timeout_s), attempt)
+        except Exception as err:
+            err.attempts = attempt
+            if not getattr(err, "retryable", False) or attempt == MAX_ATTEMPTS:
+                raise
+            # This was attempt n, so the next one is retry n.
+            delay_s = rng.uniform(0, backoff_ceiling_s(attempt))
+            if clock.now() + delay_s > deadline - min_remaining:
+                raise   # after this sleep, too little time would be left
+            clock.sleep(delay_s)
 
 
 class TTLCache:
@@ -62,12 +83,21 @@ class TTLCache:
     """
 
     def __init__(self, clock, ttl_s=CACHE_TTL_S):
-        raise NotImplementedError
+        self._clock = clock
+        self._ttl_s = ttl_s
+        self._entries = {}          # key -> (value, expires_at)
 
     def get(self, key):
         """Return the cached value if present and fresh, else None."""
-        raise NotImplementedError
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        value, expires_at = entry
+        if self._clock.now() >= expires_at:
+            del self._entries[key]  # expired: drop it so memory holds only fresh entries
+            return None
+        return value
 
     def put(self, key, value):
         """Store value under key, stamped with the current time."""
-        raise NotImplementedError
+        self._entries[key] = (value, self._clock.now() + self._ttl_s)
