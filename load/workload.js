@@ -47,8 +47,12 @@ function rate(r) {
 function vus(peakRate) {
   // Enough VUs for every request to take up to 0.5 s at the peak rate, and at
   // least 200 so slow conditions (C6: up to 3 s per request at 50 req/s) never
-  // run out. A shortage shows up as dropped iterations, which invalidates the run.
-  return { preAllocatedVUs: Math.ceil(peakRate * 0.2) + 20, maxVUs: Math.max(200, Math.ceil(peakRate * 0.5)) };
+  // run out. All of them are created before the test starts: k6 can add VUs
+  // during a run, but each one takes time to start, and iterations that find no
+  // free VU meanwhile are dropped (seen when cold starts slowed the first
+  // seconds of a run). Dropped iterations invalidate the run.
+  const count = Math.max(200, Math.ceil(peakRate * 0.5));
+  return { preAllocatedVUs: count, maxVUs: count };
 }
 
 function steady(r, seconds, startS) {
@@ -89,8 +93,19 @@ function buildScenarios() {
   return scenarios;
 }
 
+const SCENARIOS = buildScenarios();
+
+// A threshold that always passes makes k6 report dropped iterations per
+// scenario, so the summary shows whether drops fell in the warm-up or the
+// measured phase.
+const THRESHOLDS = {};
+for (const name of Object.keys(SCENARIOS)) {
+  THRESHOLDS[`dropped_iterations{scenario:${name}}`] = ['count>=0'];
+}
+
 export const options = {
-  scenarios: buildScenarios(),
+  scenarios: SCENARIOS,
+  thresholds: THRESHOLDS,
   discardResponseBodies: true,   // the headers carry everything the analysis needs
   summaryTrendStats: ['med', 'p(95)', 'p(99)', 'max'],
 };
@@ -180,6 +195,8 @@ export function handleSummary(data) {
     run: RUN_ID, condition: CONDITION, config: CONFIG,
     requests: count('http_reqs'),
     dropped_iterations: count('dropped_iterations'),   // > 0 makes the run invalid
+    dropped_by_phase: Object.fromEntries(Object.keys(SCENARIOS).map(
+      (name) => [name, count(`dropped_iterations{scenario:${name}}`)])),
     max_vus: data.metrics.vus_max ? data.metrics.vus_max.values.max : 0,
   };
   return {

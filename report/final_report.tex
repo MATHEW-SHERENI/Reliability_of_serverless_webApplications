@@ -365,6 +365,58 @@ cache: each environment holds its own cache, so clearing one would leave the
 others stale anyway, and that staleness is what the stale-response rate
 measures.
 
+\subsection{Workload Generator (M5)}
+The workload is a k6 script (\texttt{load/workload.js}) that builds the
+arrival pattern of each condition in midterm Table~3 from one variable: the steady
+conditions run a 30\,s warm-up and 3 minutes at 50\,req/s, C2 sends 100
+simultaneous reads and then 50\,req/s for 30\,s, and C3 steps through 100, 250,
+500, 1{,}000, and 2{,}000\,req/s for 60\,s each. The workload is open: k6's
+arrival-rate executors start requests on schedule whether or not earlier ones
+have finished, so a slower API shows up as higher latency instead of quietly
+reducing the load. Each request is a read with probability 0.9; reads choose a
+product from a Zipf distribution ($s = 1$) over the 1{,}000 IDs, sampled by
+binary search in a precomputed cumulative distribution, and orders use a
+uniform product and a unique idempotency key. Because the k6 random function
+cannot be seeded, each virtual user has its own small seeded generator. The
+client timeout is 10\,s.
+
+Each request writes one JSON line with its send time, phase, operation,
+product, status, latency, connection time, and the six diagnostic headers.
+k6's built-in JSON output writes about thirteen metric lines per request,
+which at 2{,}000\,req/s would approach a gigabyte per run and load the very
+machine whose CPU must stay below 70\%; one compact line per request keeps
+the largest run near 60\,MB, and response bodies are discarded because the
+headers carry everything the analysis needs. Each run also writes a summary
+with the request count and the dropped iterations, overall and per phase. A
+local check against a mock of the API, at 10{,}000 requests, measured a read
+share of 0.900 and Zipf shares of 13.2\% and 6.9\% for products 1 and 2
+(13.4\% and 6.7\% expected).
+
+\subsection{Load Host and Results Storage}
+The experiment runs come from an EC2 instance in us-east-2, the region of the
+API. It has no SSH key and no inbound port: commands reach it through AWS
+Systems Manager, its role may only use Systems Manager and read or write
+objects under \texttt{runs/} in the results bucket, and the instance metadata
+service accepts only its hardened version. At first boot it installs k6 2.3.0
+from the official release and refuses the file if its SHA-256 differs from
+the value pinned in the repository. The planned \texttt{m7i.large} was
+refused because the account is on the AWS free plan, which allows only a short
+list of instance types; the host is an \texttt{m7i-flex.large} from that list
+(2 vCPU, 8\,GiB), which guarantees 40\% CPU and runs at full speed 95\% of the
+time, rather than a T3, which slows down once its CPU credits are used up.
+Each run records the host's CPU every 5\,s, so a run affected by a slowdown
+fails the 70\% rule.
+
+The results bucket is versioned, blocks all public access, and lives in a
+separate Terraform stack (\texttt{infra/data}) with no destroy command, so
+removing the testbed at the end of a session cannot delete experiment data.
+One run is driven by \texttt{orchestrate/loadhost.py}: it uploads the
+workload script to the run's folder in the bucket, waits for the instance to
+report to Systems Manager, sends the run command (download the script, run k6
+while \texttt{vmstat} records CPU use, compress the records, upload every
+file), copies the files back, and applies the midterm's validity rule, no
+dropped iterations and at most 70\% CPU.
+
 % =====================================================================
 \section{Architecture as Built}
 \todo{Final architecture and internal design figures; note any differences
@@ -493,6 +545,29 @@ the cache on, repeated reads returned \texttt{X-Cache: HIT}. The tests restore
 Base and a healthy dependency, and \texttt{terraform plan} afterwards reported
 no changes. Together with CT1, the three integration tests passed in 28\,s.
 
+\subsection{First Runs: Laptop Smoke Test and the Load Host}
+A 10\% smoke run from the development laptop (5\,req/s for 25\,s) sent 126
+requests through the deployed API with no dropped iterations; all returned 200
+with every diagnostic header, at a median of 73\,ms.
+
+The first full C1 run of the Base configuration from the load host was
+invalid: 23 dropped iterations, although the host's CPU peaked at only 20\%.
+The run also contained ten 504 responses at its start, the same cold-start
+effect seen on November 4. Those slow first seconds needed about 80 virtual
+users at once, but the script had prepared only 30 and let k6 create more
+during the run; iterations that found no free virtual user while new ones
+were starting were dropped. Against a local mock whose first four seconds
+were slow, the same script dropped 24 iterations, all in the warm-up, with 84
+virtual users at most; with all virtual users created before the run starts
+(200 per phase at 50\,req/s, 1{,}000 for the C3 ramp, which used 432\,MB of
+memory), it dropped none. The repeated run was valid: 10{,}502 requests (10{,}500
+planned), no dropped iterations in either phase, a CPU peak of 9\%, every
+response 200 with all headers, a read share of 0.900, and product 1 at
+13.4\% of reads as Zipf predicts. Its measured phase had a median of 33.3\,ms,
+a $p_{95}$ of 46.2\,ms, and a $p_{99}$ of 55.0\,ms, so in the warm, healthy
+condition Base meets the 500\,ms latency target by a factor of about ten, and
+the same-region host halves the laptop's median latency.
+
 \todo{CT4 handler checks (no dependency call on a hit, \texttt{POST} never
 cached), written by me; CT6 and CT7.}
 
@@ -546,6 +621,15 @@ Nov 8 & The agent also implemented the cache (\texttt{TTLCache}), which is in
   the same file, not only the retry policy named as the delegated task. &
   Both live in \texttt{reliability.py}; the cache was checked by the four CT4
   tests written beforehand and reviewed with the retry policy. \\
+Nov 11 & k6 is installed from the official release file, checked against a
+  pinned SHA-256, instead of from a pinned Docker image. &
+  The checksum fixes the exact k6 build just as an image tag would, with one
+  component fewer on the load host. \\
+Nov 11 & The load host is an \texttt{m7i-flex.large}, and its machine image
+  is the newest Amazon Linux 2023 at deployment, recorded for each run, rather
+  than one fixed image. &
+  The account's free plan refused \texttt{m7i.large}; the testbed is rebuilt
+  every session, so the image is recorded instead of fixed. \\
 \bottomrule
 \end{tabularx}
 \caption{Changes from the midterm plan.}
@@ -636,6 +720,15 @@ Nov 8 & The agent also implemented the cache (\texttt{TTLCache}), which is in
   \item A test that changes the deployed system must restore it, or later
   runs start from a hidden state; \texttt{terraform plan} showing no changes
   confirms the restore.
+  \item A load generator can be the bottleneck while its CPU is idle: k6 had
+  to create virtual users in the middle of a run and dropped requests while
+  they started, and only the dropped-iteration rule revealed it.
+  \item Where the client runs is part of the measurement: the same API
+  answered in a median of 73\,ms from a home network and 33\,ms from the same
+  region.
+  \item Account limits shape the design: the free plan allows only a few
+  instance types, which an error at deployment, not the documentation I had
+  read, made clear.
 \end{itemize}
 
 % =====================================================================
@@ -686,6 +779,12 @@ Nov 8 & The agent also implemented the cache (\texttt{TTLCache}), which is in
   tests, and the live integration tests, leaving the two CT4 handler tests for
   me. I applied the changes, deployed the stack, and ran the unit and
   integration tests.
+  \item Nov 11: Claude wrote the k6 workload script, the record checker, the
+  load-host and results-bucket Terraform, and the run script, tested them
+  against a local mock of the API, diagnosed the dropped iterations of the
+  first load-host run by reproducing them, and supplied the fix. I deployed
+  the stacks, ran the smoke test and the load-host runs, and checked their
+  results.
 \end{itemize}
 
 % =====================================================================

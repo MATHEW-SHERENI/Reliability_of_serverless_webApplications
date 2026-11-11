@@ -1,12 +1,13 @@
 """Summarize a k6 record file (one JSON line per request) to check a run by eye.
 
-Usage: .venv/bin/python load/check_records.py results/smoke.jsonl
+Usage: .venv/bin/python load/check_records.py results/smoke.jsonl   (or a .jsonl.gz file)
 
 Prints request counts per phase, operation and status, the read share (90%
 planned), how often product 1 was read against the Zipf expectation, whether
 every answered request carried the diagnostic headers, and nearest-rank latency
 percentiles for the measured phase.
 """
+import gzip
 import json
 import math
 import sys
@@ -22,7 +23,8 @@ def nearest_rank(sorted_values, p):
 
 
 def main(path):
-    with open(path) as f:
+    opener = gzip.open if path.endswith(".gz") else open
+    with opener(path, "rt") as f:
         records = [json.loads(line) for line in f if line.startswith("{")]
     if not records:
         sys.exit(f"no records in {path}")

@@ -24,3 +24,15 @@ output "catalog_function_name" {
 output "api_url" {
   value = aws_apigatewayv2_stage.default.invoke_url
 }
+
+output "loadhost_id" {
+  value = aws_instance.loadhost.id
+}
+
+output "loadhost_ami" {
+  value = aws_instance.loadhost.ami
+}
+
+output "results_bucket" {
+  value = local.results_bucket
+}

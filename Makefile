@@ -9,7 +9,7 @@ PY := .venv/bin/python
 AWS_PROFILE ?= B10
 export AWS_PROFILE
 
-.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load
+.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run
 
 init:
 	$(TF) init
@@ -45,3 +45,15 @@ smoke-load:
 	  -e RUN_ID=smoke -e SCALE=0.1 -e WARMUP_S=5 -e MAIN_S=20 \
 	  -e SUMMARY=results/smoke-summary.json load/workload.js
 	$(PY) load/check_records.py results/smoke.jsonl
+
+# Results bucket: a separate stack that `make destroy` never touches.
+# Run data-init once, then data-deploy once; there is no data-destroy on purpose.
+data-init:
+	terraform -chdir=infra/data init
+
+data-deploy:
+	terraform -chdir=infra/data apply
+
+# One full-size C1 run of the deployed configuration from the EC2 load host.
+ec2-run:
+	$(PY) orchestrate/loadhost.py --condition C1 --config Base
