@@ -54,6 +54,8 @@ resource "aws_lambda_function" "catalog" {
     variables = {
       DEPENDENCY_URL     = aws_lambda_function_url.dependency.function_url
       ATTEMPT_TIMEOUT_MS = "1000"
+      MECH_RETRY         = "false"
+      MECH_CACHE         = "false"
     }
   }
 

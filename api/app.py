@@ -2,16 +2,21 @@
 
 Receives API Gateway HTTP API events for GET /products/{id} and POST /orders,
 validates input, calls the dependency, maps the outcome to an HTTP status, and
-adds the diagnostic headers that every measurement relies on. Day 06: one
-attempt and no cache (the Base configuration); the reliability middleware (M2)
-is added on Days 10-11.
+adds the diagnostic headers that every measurement relies on.
+
+Two flags, read once when the environment starts, select the configuration:
+MECH_RETRY (deadline-aware retries for product reads) and MECH_CACHE (a
+per-environment 60 s cache for product reads). Both off is the Base
+configuration. Orders are never retried (until T5) and never cached.
 """
 import base64
 import json
 import os
+import random
 import time
 import uuid
 
+import reliability
 from dep_client import (DependencyClient, DependencyClientError,
                         DependencyServerError, DependencyTimeout)
 
@@ -19,6 +24,24 @@ ENV_ID = str(uuid.uuid4())   # identifies this execution environment
 ATTEMPT_TIMEOUT_S = int(os.environ.get("ATTEMPT_TIMEOUT_MS", "1000")) / 1000
 MAX_PRODUCT_ID = 1000
 MAX_QUANTITY = 10
+
+
+def parse_flag(name, env=os.environ):
+    """Read a true/false flag; anything else stops the environment from starting."""
+    value = env.get(name, "false").strip().lower()
+    if value not in ("true", "false"):
+        raise ValueError(f"{name} must be 'true' or 'false', not {value!r}")
+    return value == "true"
+
+
+MECH_RETRY = parse_flag("MECH_RETRY")
+MECH_CACHE = parse_flag("MECH_CACHE")
+CONFIG_NAMES = {(False, False): "Base", (True, False): "Retry",
+                (False, True): "Cache", (True, True): "Retry+Cache"}
+
+_clock = reliability.Clock()
+_rng = random.Random()                    # jitter: unseeded, differs per environment
+_cache = reliability.TTLCache(_clock)     # lives as long as this environment
 
 _cold = True      # True only for the first request this environment serves
 _client = None    # created on first use, then reused while the environment is warm
@@ -74,14 +97,44 @@ class Outcome:
         self.error_detail = None
 
 
+def config_name():
+    return CONFIG_NAMES[(MECH_RETRY, MECH_CACHE)]
+
+
+def fetch_product(product_id, outcome):
+    """Read one product from the dependency: one attempt, or the retry policy."""
+    def attempt(timeout_s):
+        return get_client().get_item(product_id, timeout_s=timeout_s)
+
+    if not MECH_RETRY:
+        outcome.attempts = 1
+        return attempt(ATTEMPT_TIMEOUT_S)
+    try:
+        result = reliability.call_with_retry(attempt, _clock, _rng)
+    except Exception as err:
+        outcome.attempts = getattr(err, "attempts", 1)
+        raise                             # the status mapping in handler() still applies
+    outcome.attempts = result.attempts
+    return result.value
+
+
 def get_product(raw_id, outcome):
     product_id = parse_product_id(raw_id)
     if product_id is None:
         outcome.status = 400
         outcome.body = {"error": "product id must be an integer from 1 to 1000"}
         return
-    outcome.attempts = 1
-    item = get_client().get_item(product_id, timeout_s=ATTEMPT_TIMEOUT_S)
+    if MECH_CACHE:
+        item = _cache.get(product_id)
+        if item is not None:              # hit: no dependency call, attempts stays 0
+            outcome.cache = "HIT"
+            outcome.status, outcome.body = 200, item
+            outcome.data_version = item.get("version")
+            return
+        outcome.cache = "MISS"
+    item = fetch_product(product_id, outcome)
+    if MECH_CACHE:
+        _cache.put(product_id, item)      # only successful reads are stored
     outcome.status, outcome.body = 200, item
     outcome.data_version = item.get("version")
 
@@ -128,6 +181,7 @@ def handler(event, context):
     print(json.dumps({
         "type": "request",
         "request_id": context.aws_request_id,
+        "config": config_name(),
         "env_id": ENV_ID,
         "cold_start": cold,
         "route": route,

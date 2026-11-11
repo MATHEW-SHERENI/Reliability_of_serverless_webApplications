@@ -335,6 +335,36 @@ but has no retryable flag, so it is raised after a single attempt, since a bug
 fails the same way every time and retrying would only multiply the latency and
 cost before the same error.
 
+\subsection{Mechanism Flags: Retry and Cache in the Catalog}
+Two environment variables of the Catalog function, \texttt{MECH\_RETRY} and
+\texttt{MECH\_CACHE}, select the configuration: both false is Base, and the
+other three combinations are Retry, Cache, and Retry+Cache. They are read once
+when an execution environment starts, as the midterm specifies, so a change
+reaches requests only through new environments and every request in a run sees
+one configuration. Only the values \texttt{true} and \texttt{false} are
+accepted; any other value stops the environment from starting, so a typing
+mistake cannot silently run Base in place of the configuration being measured.
+Each request's log line records the configuration name, so the analysis can
+check which configuration actually served it. Terraform deploys both flags as
+\texttt{false}, and the orchestrator switches them with
+\texttt{set\_mechanisms}, which shares the read, merge, write, and wait steps
+with \texttt{set\_faults}.
+
+A product read follows the order of the midterm architecture: cache, then retry
+policy, then dependency client. With the cache on, a fresh entry is returned
+without a dependency call (\texttt{X-Cache: HIT}, \texttt{X-Attempts: 0}, which
+is correct for the retry-overhead metric of dependency calls per request);
+otherwise the read is a miss and its result is stored, but only if it
+succeeded, so a single 503 or 404 is never served for the next 60\,s. With the
+retry flag on, the read goes through \texttt{call\_with\_retry}, and a failed
+read reports how many attempts it made. Orders are never retried, because a
+retried reservation after a timeout could reserve stock twice when the first
+attempt had in fact succeeded; this stays so until request deduplication (T5).
+Orders are also never cached, and an order does not remove the product from the
+cache: each environment holds its own cache, so clearing one would leave the
+others stale anyway, and that staleness is what the stale-response rate
+measures.
+
 % =====================================================================
 \section{Architecture as Built}
 \todo{Final architecture and internal design figures; note any differences
@@ -448,8 +478,23 @@ Because the marker was strict, the first test run after the implementation
 reported the nine passing tests as failures until the marker was deleted, so it
 could not be left behind by mistake.
 
+\subsection{Mechanism Switching on the Deployed Stack}
+Nineteen new unit tests cover the flags (accepted and rejected values), retries
+in the handler (recovery after two 503s, a stop after four attempts with status
+503 and \texttt{X-Attempts: 4}, no retry of an unknown product, the deadline for
+timeouts, and orders never retried), the cache (expiry after 60\,s, failures
+not cached, products cached separately), and the midterm's worked example, in
+which a 503 followed by a success returns \texttt{X-Cache: MISS} with
+\texttt{X-Attempts: 2} and the next read is a hit; \texttt{make test} reports
+75 passed. Two integration tests then switched the deployed Catalog by
+configuration only. With the dependency failing every call, Base returned 503
+after one attempt and Retry returned 503 after four, from the same code; with
+the cache on, repeated reads returned \texttt{X-Cache: HIT}. The tests restore
+Base and a healthy dependency, and \texttt{terraform plan} afterwards reported
+no changes. Together with CT1, the three integration tests passed in 28\,s.
+
 \todo{CT4 handler checks (no dependency call on a hit, \texttt{POST} never
-cached) after the cache is connected to the handler; CT6 and CT7.}
+cached), written by me; CT6 and CT7.}
 
 % =====================================================================
 \section{Results}
@@ -585,6 +630,12 @@ Nov 8 & The agent also implemented the cache (\texttt{TTLCache}), which is in
   delay can lie within its bound while the distribution is still wrong, so the
   sampling check also compares the mean and the spread with what full jitter
   predicts.
+  \item A configuration flag that accepts any value is a silent risk for an
+  experiment: a typing mistake would run the wrong configuration and still
+  produce plausible results, so the flags reject anything but true or false.
+  \item A test that changes the deployed system must restore it, or later
+  runs start from a hidden state; \texttt{terraform plan} showing no changes
+  confirms the restore.
 \end{itemize}
 
 % =====================================================================
@@ -630,6 +681,11 @@ Nov 8 & The agent also implemented the cache (\texttt{TTLCache}), which is in
   backoff check. I ran the tests and the check, reviewed the code line by line,
   and answered two review questions on the backoff numbering and on unexpected
   errors; Claude corrected my description of how the second case is handled.
+  \item Nov 10: Claude wrote the mechanism flags and their wiring in the
+  Catalog, \texttt{set\_mechanisms}, the Terraform variables, the new unit
+  tests, and the live integration tests, leaving the two CT4 handler tests for
+  me. I applied the changes, deployed the stack, and ran the unit and
+  integration tests.
 \end{itemize}
 
 % =====================================================================
