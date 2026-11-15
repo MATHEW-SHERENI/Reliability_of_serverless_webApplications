@@ -417,6 +417,37 @@ while \texttt{vmstat} records CPU use, compress the records, upload every
 file), copies the files back, and applies the midterm's validity rule, no
 dropped iterations and at most 70\% CPU.
 
+\subsection{Experiment Orchestrator (M6)}
+The orchestrator (\texttt{orchestrate/experiment.py}) carries out a plan file,
+the single file the midterm called for: it names the configurations,
+conditions, repetitions, and seed (\texttt{experiments/smoke.json} with one
+run, \texttt{experiments/pilot.json} with eight). The run order is seeded,
+randomized, and interleaved: each repetition is one block that contains every
+configuration and condition cell once, shuffled, so a slow period on the
+shared cloud affects all configurations alike; a test checks that the full
+plan gives 140 runs with every cell five times.
+
+Before each run, the orchestrator sets the Catalog's two flags from the
+configuration and the dependency's fault settings from the condition, and
+waits until AWS has applied them. Both functions also receive the run's
+identifier, so every run starts with new execution environments, which
+condition C2 relies on, and the Catalog's log lines name their run. During the
+run, a price updater changes the price of 1\% of the products every 10\,s,
+raises their versions, and logs each change; a cached read is stale when its
+data version is below the latest logged version, which is how RQ3 measures
+staleness. Because \texttt{make destroy} deletes the log groups, each run's
+REPORT lines and JSON log lines are copied to its folder in the results
+bucket next to the k6 records and the version log.
+
+Each attempt is judged by the midterm's rules: it is invalid if a run file is
+missing, any iteration was dropped, or the load host's CPU exceeded 70\%. An
+invalid run is queued again, up to three attempts, and every attempt gets a
+manifest with the Git commit and whether the working copy had uncommitted
+changes, the settings, the times, and the result. The analysis reads only the
+valid runs, one per cell and repetition. When the experiment ends, even after
+an error or an interruption, the stack is restored to Base with a healthy
+dependency.
+
 % =====================================================================
 \section{Architecture as Built}
 \todo{Final architecture and internal design figures; note any differences
@@ -568,8 +599,44 @@ a $p_{95}$ of 46.2\,ms, and a $p_{99}$ of 55.0\,ms, so in the warm, healthy
 condition Base meets the 500\,ms latency target by a factor of about ten, and
 the same-region host halves the laptop's median latency.
 
+\subsection{CT7: Failed Collection, and the First Orchestrated Run}
+CT7 runs the orchestrator with the cloud replaced by a scripted backend, so that
+failures can be produced on demand: 23 dropped iterations, a run file that
+never arrives in S3, a crashed run, and a manifest that cannot be stored. In
+each case the run is marked invalid with its reason, queued again, and left
+out of the runs the analysis may use; a cell that fails three times is given
+up rather than retried forever, and the stack is restored even when the
+experiment is interrupted. The midterm described CT7 as a forced failure of a
+real run; the scripted version makes every failure repeatable, and two real
+failures were caught the same way (the dropped iterations of November 11 and
+the crashes below). To check that CT7 can detect a faulty orchestrator, it was
+run against four deliberately incorrect versions: one that never queued an
+invalid run again, one that let invalid runs into the analysis, one that did
+not restore the stack after an interruption, and one that ignored dropped
+iterations. Each made at least one CT7 test fail. The cloud-facing parts were
+also exercised against moto, a local imitation of AWS: the price updater
+changed 30 prices in three rounds with the versions really incremented, and
+the manifest, version log, and log lines reached S3.
+
+The first orchestrated run on November 14 failed three times with the same
+error and was correctly given up and the stack restored. The cause was in the
+price updater: it kept its stop signal in an attribute named \texttt{\_stop},
+which on Python 3.12, the project's version, replaces an internal method of
+the same name that the thread calls when it finishes; on Python 3.13, used for
+the earlier checks, that method no longer exists, so every test had passed.
+After renaming the attribute and adding a test that runs the real thread from
+start to stop, which fails on Python 3.12 with the old code, the tests are run
+on both versions. The repeated run, from commit \texttt{ae9b5de} with no
+uncommitted changes, was valid: no dropped iterations, a CPU peak of 9\%, 200
+price changes without an error, 31{,}506 Lambda log lines saved, and no
+configuration drift afterwards. It also showed that the measured phase began
+16\,s before the planned \texttt{RUN\_START}, because k6 started about 4\,s
+after the faults were set rather than the estimated 20\,s; the estimate was
+corrected to 5\,s, and each manifest now records this offset, which places
+the C7 outage within the measured phase.
+
 \todo{CT4 handler checks (no dependency call on a hit, \texttt{POST} never
-cached), written by me; CT6 and CT7.}
+cached), written by me; CT6.}
 
 % =====================================================================
 \section{Results}
@@ -630,6 +697,14 @@ Nov 11 & The load host is an \texttt{m7i-flex.large}, and its machine image
   than one fixed image. &
   The account's free plan refused \texttt{m7i.large}; the testbed is rebuilt
   every session, so the image is recorded instead of fixed. \\
+Nov 14 & CT7 is tested with a scripted backend instead of by forcing a real
+  k6 run to drop iterations and an S3 upload to fail. &
+  The scripted failures are exactly repeatable and cost nothing; real
+  failures of both kinds were caught by the same code on November 11 and 14. \\
+Nov 14 & The 30\,s warm-up is part of the k6 run, not a separate step of the
+  orchestrator. &
+  One timed phase in one tool keeps the warm-up and the measured phase
+  exactly adjacent and labelled in every record. \\
 \bottomrule
 \end{tabularx}
 \caption{Changes from the midterm plan.}
@@ -729,6 +804,15 @@ Nov 11 & The load host is an \texttt{m7i-flex.large}, and its machine image
   \item Account limits shape the design: the free plan allows only a few
   instance types, which an error at deployment, not the documentation I had
   read, made clear.
+  \item Tests prove code only on the version they run on: the price updater
+  passed every test on Python 3.13 and crashed on the project's Python 3.12,
+  so the tests now run on both.
+  \item A planned timing should be checked against a measured one: the run's
+  own records showed that k6 started 16\,s earlier than the orchestrator
+  assumed, which would have shifted the C7 outage.
+  \item A failure path is worth testing before it is needed: the first real
+  orchestrated runs crashed, and the re-queue, give-up, and restore logic
+  handled them exactly as CT7 had specified.
 \end{itemize}
 
 % =====================================================================
@@ -785,6 +869,12 @@ Nov 11 & The load host is an \texttt{m7i-flex.large}, and its machine image
   first load-host run by reproducing them, and supplied the fix. I deployed
   the stacks, ran the smoke test and the load-host runs, and checked their
   results.
+  \item Nov 14: Claude wrote the orchestrator, the plan files, the price
+  updater, the log export, and CT7, checked CT7 against four incorrect
+  orchestrators and the cloud parts against moto, then diagnosed the
+  Python 3.12 crash of the first real run and corrected the startup estimate
+  from that run's records. I committed the code before each run, ran the
+  experiments, and checked the manifests.
 \end{itemize}
 
 % =====================================================================

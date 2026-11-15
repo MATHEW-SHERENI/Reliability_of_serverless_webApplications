@@ -31,7 +31,8 @@ from orchestrate.plan import CONFIGURATIONS, fault_settings, load_plan, run_orde
 
 MAX_CPU_PERCENT = 70
 MAX_ATTEMPTS = 3          # an invalid run is queued again at most twice
-STARTUP_S = 20            # time from setting RUN_START until k6 starts on the load host
+STARTUP_S = 5             # time from setting RUN_START until k6 starts on the load host;
+                          # measured on Nov 14: about 4 s (the first estimate, 20 s, was too long)
 WARMUP_S = 30
 
 
@@ -70,6 +71,13 @@ def start_times(records_path):
             if record["ph"] == "main":
                 first_main = record["t"] if first_main is None else min(first_main, record["t"])
     return first, first_main
+
+
+def start_offset_s(run_start, measured_start_ms):
+    """How far the measured phase began after the planned RUN_START (negative = before)."""
+    if measured_start_ms is None:
+        return None
+    return round(measured_start_ms / 1000 - run_start, 1)
 
 
 def run_id_for(experiment_id, number, cell, attempt):
@@ -180,6 +188,7 @@ class AwsBackend:
         return {**result, "mechanisms": {"MECH_RETRY": retry, "MECH_CACHE": cache},
                 "faults": faults, "run_start": int(run_start), "k6_sent_ms": sent_ms,
                 "first_request_ms": first_ms, "measured_start_ms": main_ms,
+                "start_offset_s": start_offset_s(run_start, main_ms),
                 "price_updates": len(updater.log), "price_update_errors": updater.errors,
                 "lambda_log_lines": log_lines, "git_commit": self.commit,
                 "git_dirty": self.dirty, "loadhost_id": out["loadhost_id"],

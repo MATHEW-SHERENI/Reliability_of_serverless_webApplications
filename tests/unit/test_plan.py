@@ -117,3 +117,9 @@ def test_price_updater_thread_runs_rounds_and_stops_cleanly(tmp_path):
     assert len(updater.log) >= 20 and len(updater.log) % 10 == 0 and updater.errors == 0
     updater.write_log(tmp_path / "versions.jsonl")
     assert len((tmp_path / "versions.jsonl").read_text().splitlines()) == len(updater.log)
+
+
+def test_start_offset_uses_the_nov_14_smoke_run_numbers():
+    from orchestrate.experiment import start_offset_s
+    assert start_offset_s(1794719882, 1794719865944) == -16.1    # began 16 s early
+    assert start_offset_s(100, None) is None
