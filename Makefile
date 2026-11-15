@@ -9,7 +9,7 @@ PY := .venv/bin/python
 AWS_PROFILE ?= B10
 export AWS_PROFILE
 
-.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run
+.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run experiment
 
 init:
 	$(TF) init
@@ -57,3 +57,9 @@ data-deploy:
 # One full-size C1 run of the deployed configuration from the EC2 load host.
 ec2-run:
 	$(PY) orchestrate/loadhost.py --condition C1 --config Base
+
+# Run every run of a plan file through the orchestrator (M6), e.g.
+#   make experiment PLAN=experiments/pilot.json
+PLAN ?= experiments/smoke.json
+experiment:
+	$(PY) orchestrate/experiment.py $(PLAN)

@@ -1,0 +1,8 @@
+{
+  "name": "smoke",
+  "description": "One C1 run of Base: checks the orchestrator end to end (Day 15).",
+  "seed": 5360,
+  "configurations": ["Base"],
+  "conditions": ["C1"],
+  "repetitions": 1
+}

@@ -100,6 +100,36 @@ def run_command(ssm, instance_id, script, timeout_s):
             return invocation
 
 
+def run_on_loadhost(s3, ssm, bucket, instance_id, run_id, k6_env, local_dir, timeout_s=1200):
+    """One k6 run on the load host; returns what happened and copies the files locally.
+
+    Returns a dict with the SSM status, k6's output, which run files arrived,
+    the k6 summary and the load host's peak CPU (None when a file is missing).
+    """
+    prefix_key = f"runs/{run_id}/"
+    prefix = f"s3://{bucket}/{prefix_key}"
+    s3.upload_file(str(ROOT / "load" / "workload.js"), bucket, prefix_key + "workload.js")
+    wait_until_online(ssm, instance_id)
+    invocation = run_command(ssm, instance_id, remote_script(run_id, prefix, k6_env), timeout_s)
+
+    local_dir.mkdir(parents=True, exist_ok=True)
+    missing = []
+    for name in RUN_FILES:
+        try:
+            s3.download_file(bucket, prefix_key + name, str(local_dir / name))
+        except Exception:
+            missing.append(name)
+    summary = cpu = None
+    if "summary.json" not in missing:
+        summary = json.loads((local_dir / "summary.json").read_text())
+    if "vmstat.log" not in missing:
+        cpu = max_cpu_percent((local_dir / "vmstat.log").read_text())
+    return {"ssm_status": invocation["Status"],
+            "ssm_stdout": invocation["StandardOutputContent"].strip()[-500:],
+            "ssm_stderr": invocation["StandardErrorContent"].strip()[-2000:],
+            "missing_files": missing, "summary": summary, "cpu_max": cpu}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--condition", default="C1")
@@ -112,29 +142,19 @@ def main():
 
     run_id = args.run_id or f"{args.condition}-{args.config}-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
     bucket, instance_id = tf_output("results_bucket"), tf_output("loadhost_id")
-    prefix_key = f"runs/{run_id}/"
-    prefix = f"s3://{bucket}/{prefix_key}"
     k6_env = {"BASE_URL": tf_output("api_url"), "CONDITION": args.condition, "CONFIG": args.config,
               "RUN_ID": run_id, "SEED": args.seed, "SCALE": args.scale, "SUMMARY": "summary.json"}
-
     s3 = boto3.client("s3", region_name=REGION)
     ssm = boto3.client("ssm", region_name=REGION)
 
     print(f"run {run_id} on {instance_id}", flush=True)
-    s3.upload_file(str(ROOT / "load" / "workload.js"), bucket, prefix_key + "workload.js")
-    wait_until_online(ssm, instance_id)
-    invocation = run_command(ssm, instance_id, remote_script(run_id, prefix, k6_env), args.timeout_s)
-    print(f"SSM status: {invocation['Status']}; {invocation['StandardOutputContent'].strip()}")
-    if invocation["Status"] != "Success":
-        print(invocation["StandardErrorContent"][-2000:], file=sys.stderr)
-
     local_dir = ROOT / "results" / run_id
-    local_dir.mkdir(parents=True, exist_ok=True)
-    for name in RUN_FILES:
-        s3.download_file(bucket, prefix_key + name, str(local_dir / name))
-
-    summary = json.loads((local_dir / "summary.json").read_text())
-    cpu = max_cpu_percent((local_dir / "vmstat.log").read_text())
+    result = run_on_loadhost(s3, ssm, bucket, instance_id, run_id, k6_env, local_dir, args.timeout_s)
+    print(f"SSM status: {result['ssm_status']}; {result['ssm_stdout']}")
+    if result["missing_files"] or result["summary"] is None or result["cpu_max"] is None:
+        print(f"missing run files: {result['missing_files']}\n{result['ssm_stderr']}", file=sys.stderr)
+        return 1
+    summary, cpu = result["summary"], result["cpu_max"]
     valid = run_is_valid(summary, cpu)
     print(f"requests {summary['requests']}, dropped iterations {summary['dropped_iterations']} "
           f"{summary.get('dropped_by_phase', '')}, max VUs {summary['max_vus']}, "

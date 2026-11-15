@@ -1,0 +1,8 @@
+{
+  "name": "pilot",
+  "description": "Milestone 2 pilot: C1 and C4 for all four configurations, 8 runs (Day 17).",
+  "seed": 5360,
+  "configurations": ["Base", "Retry", "Cache", "Retry+Cache"],
+  "conditions": ["C1", "C4"],
+  "repetitions": 1
+}

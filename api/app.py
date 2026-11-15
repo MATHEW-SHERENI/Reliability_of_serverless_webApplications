@@ -21,6 +21,7 @@ from dep_client import (DependencyClient, DependencyClientError,
                         DependencyServerError, DependencyTimeout)
 
 ENV_ID = str(uuid.uuid4())   # identifies this execution environment
+RUN_ID = os.environ.get("RUN_ID", "none")   # set by the orchestrator for each run
 ATTEMPT_TIMEOUT_S = int(os.environ.get("ATTEMPT_TIMEOUT_MS", "1000")) / 1000
 MAX_PRODUCT_ID = 1000
 MAX_QUANTITY = 10
@@ -181,6 +182,7 @@ def handler(event, context):
     print(json.dumps({
         "type": "request",
         "request_id": context.aws_request_id,
+        "run_id": RUN_ID,
         "config": config_name(),
         "env_id": ENV_ID,
         "cold_start": cold,

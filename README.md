@@ -16,8 +16,8 @@ work progresses, in `report/final_report.tex`.
 | Task | Status |
 |------|--------|
 | T1 Testbed: Catalog API, dependency with fault injector, Terraform | Done, tag `v0.1-testbed` (CT1, CT2, CT5 pass) |
-| T2 Reliability mechanisms: retries and in-function cache | Next |
-| T3 Measurement pipeline and evaluation (140 runs) | Planned |
+| T2 Reliability mechanisms: retries and in-function cache | Done except two CT4 handler tests (CT3, CT4 unit tests pass; flags switch configurations live) |
+| T3 Measurement pipeline and evaluation (140 runs) | In progress: k6 workload (M5), EC2 load host, results bucket, orchestrator (M6, CT7) done; metrics (M7) next |
 | T4 Circuit breaker (ambitious) | Planned |
 | T5 Request deduplication (if time permits) | Planned |
 
@@ -77,6 +77,10 @@ The virtual environment does not need to be activated: the Makefile calls
 | `make test` | Unit tests (46), no AWS access |
 | `make test-integration` | Integration tests that need the deployed stack (CT1) |
 | `make ct5` | Fault injector calibration, about 4 minutes (CT5) |
+| `make smoke-load` | 25-second, 10% k6 run from this computer (checks script and API) |
+| `make data-init`, `make data-deploy` | Create the versioned results bucket once (separate stack, never destroyed by `make destroy`) |
+| `make ec2-run` | One full C1 run of the deployed configuration from the EC2 load host |
+| `make experiment PLAN=experiments/<plan>.json` | Run every run of a plan through the orchestrator (M6); default `experiments/smoke.json` |
 
 ## Tests
 

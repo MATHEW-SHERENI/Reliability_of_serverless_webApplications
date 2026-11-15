@@ -22,4 +22,10 @@ def test_unknown_setting_is_rejected():
 
 def test_mechanism_flags_are_written_as_true_or_false():
     result = mechanism_variables({"DEPENDENCY_URL": "https://x"}, retry=True, cache=False)
-    assert result == {"DEPENDENCY_URL": "https://x", "MECH_RETRY": "true", "MECH_CACHE": "false"}
+    assert result == {"DEPENDENCY_URL": "https://x", "MECH_RETRY": "true", "MECH_CACHE": "false",
+                      "RUN_ID": "none"}
+
+
+def test_mechanism_variables_carry_the_run_id():
+    result = mechanism_variables({}, retry=False, cache=True, run_id="smoke-001")
+    assert result["RUN_ID"] == "smoke-001" and result["MECH_CACHE"] == "true"

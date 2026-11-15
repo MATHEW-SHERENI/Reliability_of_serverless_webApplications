@@ -29,11 +29,16 @@ def merged_variables(current, settings):
     return variables
 
 
-def mechanism_variables(current, retry, cache):
-    """Return the new variable set with both mechanism flags set to true or false."""
+def mechanism_variables(current, retry, cache, run_id="none"):
+    """Return the new variable set: both mechanism flags and the run ID.
+
+    The run ID changes for every run, so every run starts new execution
+    environments (which C2 measures) and the Catalog's log lines name the run.
+    """
     variables = dict(current)
     variables["MECH_RETRY"] = "true" if retry else "false"
     variables["MECH_CACHE"] = "true" if cache else "false"
+    variables["RUN_ID"] = str(run_id)
     return variables
 
 
@@ -53,7 +58,7 @@ def set_faults(function_name, region="us-east-2", **settings):
                      lambda current: merged_variables(current, settings))
 
 
-def set_mechanisms(function_name, retry, cache, region="us-east-2"):
+def set_mechanisms(function_name, retry, cache, region="us-east-2", run_id="none"):
     """Switch the Catalog's retry and cache flags and wait until AWS has applied them."""
     update_variables(function_name, region,
-                     lambda current: mechanism_variables(current, retry, cache))
+                     lambda current: mechanism_variables(current, retry, cache, run_id))
