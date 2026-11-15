@@ -27,17 +27,20 @@ def choose_updates(rng, products=PRODUCTS, share=SHARE):
 class PriceUpdater(threading.Thread):
     """Runs in the background while k6 runs; stop() ends it and waits for it."""
 
-    def __init__(self, table_name, seed, run_id, region="us-east-2", interval_s=INTERVAL_S):
+    def __init__(self, table_name, seed, run_id, region="us-east-2", interval_s=INTERVAL_S,
+                 table=None):
         super().__init__(daemon=True)
-        self.table = boto3.resource("dynamodb", region_name=region).Table(table_name)
+        self.table = table or boto3.resource("dynamodb", region_name=region).Table(table_name)
         self.rng = random.Random(f"{seed}-{run_id}")
         self.interval_s = interval_s
         self.log = []          # one entry per change: time, product, new version, price
         self.errors = 0
-        self._stop = threading.Event()
+        # Not "_stop": threading.Thread on Python 3.12 has an internal _stop()
+        # method that join() calls, and an attribute of that name replaces it.
+        self._halt = threading.Event()
 
     def run(self):
-        while not self._stop.wait(self.interval_s):
+        while not self._halt.wait(self.interval_s):
             for product_id, price in choose_updates(self.rng):
                 try:
                     new = self.table.update_item(
@@ -52,7 +55,7 @@ class PriceUpdater(threading.Thread):
                     self.errors += 1
 
     def stop(self):
-        self._stop.set()
+        self._halt.set()
         self.join()
 
     def write_log(self, path):

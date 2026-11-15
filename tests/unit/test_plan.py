@@ -94,3 +94,26 @@ def test_start_times_find_the_first_request_and_the_first_measured_one(tmp_path)
         for t, ph in ((1005, "warmup"), (1000, "warmup"), (31002, "main"), (31000, "main")):
             f.write(json.dumps({"t": t, "ph": ph}) + "\n")
     assert start_times(path) == (1000, 31000)
+
+
+class FakeTable:
+    def __init__(self):
+        self.versions = {}
+
+    def update_item(self, Key, **kwargs):
+        pid = Key["product_id"]
+        self.versions[pid] = self.versions.get(pid, 1) + 1
+        return {"Attributes": {"version": Decimal(self.versions[pid])}}
+
+
+def test_price_updater_thread_runs_rounds_and_stops_cleanly(tmp_path):
+    from orchestrate.price_updater import PriceUpdater
+    updater = PriceUpdater("unused", 5360, "run-1", interval_s=0.05, table=FakeTable())
+    updater.start()
+    import time
+    time.sleep(0.18)
+    updater.stop()                          # crashed on Python 3.12 before the fix
+    assert not updater.is_alive()
+    assert len(updater.log) >= 20 and len(updater.log) % 10 == 0 and updater.errors == 0
+    updater.write_log(tmp_path / "versions.jsonl")
+    assert len((tmp_path / "versions.jsonl").read_text().splitlines()) == len(updater.log)
