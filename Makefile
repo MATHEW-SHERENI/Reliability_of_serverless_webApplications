@@ -9,7 +9,7 @@ PY := .venv/bin/python
 AWS_PROFILE ?= B10
 export AWS_PROFILE
 
-.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run experiment
+.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run experiment metrics
 
 init:
 	$(TF) init
@@ -63,3 +63,8 @@ ec2-run:
 PLAN ?= experiments/smoke.json
 experiment:
 	$(PY) orchestrate/experiment.py $(PLAN)
+
+# Metrics (M7) of one run or of every valid run of an experiment, e.g.
+#   make metrics RUN=results/smoke-20261115T051707Z-001-C1-Base-r1-a1
+metrics:
+	$(PY) analysis/metrics.py $(RUN)

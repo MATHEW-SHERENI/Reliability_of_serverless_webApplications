@@ -17,7 +17,7 @@ work progresses, in `report/final_report.tex`.
 |------|--------|
 | T1 Testbed: Catalog API, dependency with fault injector, Terraform | Done, tag `v0.1-testbed` (CT1, CT2, CT5 pass) |
 | T2 Reliability mechanisms: retries and in-function cache | Done except two CT4 handler tests (CT3, CT4 unit tests pass; flags switch configurations live) |
-| T3 Measurement pipeline and evaluation (140 runs) | In progress: k6 workload (M5), EC2 load host, results bucket, orchestrator (M6, CT7) done; metrics (M7) next |
+| T3 Measurement pipeline and evaluation (140 runs) | In progress: k6 workload (M5), EC2 load host, results bucket, orchestrator (M6, CT7), metrics (M7, CT6) done; pilot next |
 | T4 Circuit breaker (ambitious) | Planned |
 | T5 Request deduplication (if time permits) | Planned |
 
@@ -74,19 +74,21 @@ The virtual environment does not need to be activated: the Makefile calls
 | `make deploy` | Create or update all AWS resources |
 | `make destroy` | Delete all AWS resources |
 | `make seed` | Write the 1,000-product catalog (seed 5360) |
-| `make test` | Unit tests (46), no AWS access |
+| `make test` | Unit tests (120), no AWS access |
 | `make test-integration` | Integration tests that need the deployed stack (CT1) |
 | `make ct5` | Fault injector calibration, about 4 minutes (CT5) |
 | `make smoke-load` | 25-second, 10% k6 run from this computer (checks script and API) |
 | `make data-init`, `make data-deploy` | Create the versioned results bucket once (separate stack, never destroyed by `make destroy`) |
 | `make ec2-run` | One full C1 run of the deployed configuration from the EC2 load host |
 | `make experiment PLAN=experiments/<plan>.json` | Run every run of a plan through the orchestrator (M6); default `experiments/smoke.json` |
+| `make metrics RUN=results/<folder>` | Metrics (M7) of one run, or of every valid run of an experiment; writes `metrics.csv` (and `windows.csv`, `buckets.csv` per run) |
 
 ## Tests
 
 | Test | Type | What it shows |
 |------|------|---------------|
 | Unit tests (`tests/unit/`) | pytest, offline | Seeder, fault logic, dependency client, Catalog handler (including CT2, invalid input), fault switching |
+| CT6 (`tests/unit/test_ct6_metrics.py`) | pytest, offline | A hand-built run of 20 requests with one outage: p50/p95/p99, error rate, recovery time and cost equal the values computed by hand |
 | CT1 (`tests/integration/test_ct1_workflow.py`) | pytest, marked `integration` | A product read and an order through the deployed API; stock drops by exactly 2 |
 | CT5 (`tests/integration/ct5_fault_calibration.py`) | script | 10% faults give 9-11% failures; +300 ms delay adds 270-330 ms to median dependency latency; outage failures only inside the window |
 

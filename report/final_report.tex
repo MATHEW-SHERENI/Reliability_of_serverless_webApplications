@@ -448,6 +448,38 @@ valid runs, one per cell and repetition. When the experiment ends, even after
 an error or an interruption, the stack is restored to Base with a healthy
 dependency.
 
+\subsection{Metrics and Cost Model (M7)}
+The metrics module (\texttt{analysis/metrics.py}) turns the files of one run
+into one row of metrics, with the definitions of midterm Section~4.4 and only
+the measured phase. A request fails if its status is 500 or above or 429, or
+if no answer arrived within the 10\,s client timeout. Latency percentiles use
+the nearest rank over all measured requests, failed ones included. Throughput
+is successful responses per second of the measured phase; $\bar{a}$ is the
+mean of the attempts header, in which a cache hit counts zero; $H$ is the share
+of hits among the reads that went through the cache; and a hit is stale when a
+newer version of that product had been logged before the request was sent.
+Each 1-minute window is judged against the SLO. For C7, the recovery time
+counts 5\,s buckets from the end of the outage in the fault schedule and finds
+the first bucket from which six in a row (30\,s) meet both thresholds; a
+bucket without requests counts as failing, because no answers are no evidence
+of health.
+
+The Catalog's log lines are joined to the client's records by request ID.
+The join separates a 5xx that the Catalog itself returned after the
+dependency failed from one that never reached the code, such as a Lambda
+timeout, which matters when the error rates of the configurations are
+compared. The dependency's calls carry no identifier that the client sees, so
+its invocations, billed GB-seconds, and injected faults are counted over the
+time span of the measured phase, and the Catalog's are counted the same way.
+DynamoDB does not log request units, so they are estimated: every dependency
+call that was neither stopped by an injected fault nor an order is one
+eventually consistent read of an item under 4\,KB (0.5 read units), and every
+order that reached the database is a transaction of two small items (4 write
+units). The price updater's writes belong to the experiment, not to the API,
+and are not counted. For each run the module writes the row, the windows, and
+5\,s buckets for the C7 time series as CSV files, and for an experiment one
+row for every valid run.
+
 % =====================================================================
 \section{Architecture as Built}
 \todo{Final architecture and internal design figures; note any differences
@@ -635,8 +667,44 @@ after the faults were set rather than the estimated 20\,s; the estimate was
 corrected to 5\,s, and each manifest now records this offset, which places
 the C7 outage within the measured phase.
 
+\subsection{CT6: Metrics on a Hand-Built Run}
+The CT6 fixture is a run of 20 measured requests, one every 5\,s, plus one
+warm-up request with its Lambda lines, which must be left out. Requests 2 to 5
+fail during an outage that ends at 30\,s (three 503 responses and one request
+without an answer), one request is throttled (429), and one 404 is a real
+answer and therefore not a failure. Every expected value was worked out by hand
+before the test was run (Table~\ref{tab:ct6}), and all of them matched, on
+Python 3.12 and 3.13. Ten further tests cover staleness, the hit ratio,
+$\bar{a}$, the failure rule status by status, an empty window, and the CSV
+files. A mutation check made 24 deliberate changes to the module. Five
+survived the first version of the tests: four were untested edge cases (a
+status of exactly 500, a price change in the same millisecond as a cache hit,
+an empty window, and a hit ratio computed over all requests instead of cached
+reads), which now have tests, and one was a line without effect, which was
+removed. All 23 remaining changes are caught.
+
+\begin{table}[h]
+\centering
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}l>{\RaggedRight\arraybackslash}Xl@{}}
+\toprule
+\textbf{Metric} & \textbf{Hand computation} & \textbf{Expected} \\
+\midrule
+p50, p95, p99 & ranks $\lceil 0.5 \cdot 20\rceil = 10$, $\lceil 0.95 \cdot 20\rceil = 19$,
+  $\lceil 0.99 \cdot 20\rceil = 20$ of the sorted latencies & 35, 800, 10{,}000\,ms \\
+Error rate & failures 429, 503, 503, 503, no answer: 5 of 20 & 0.25 \\
+Recovery $R$ & buckets from 30\,s: 800\,ms at 30\,s and 600\,ms at 45\,s fail, 50--80\,s all
+  pass; $50 - 30$ & 20\,s \\
+Cost $C$ & 20 gateway requests, 38 invocations, 1.555\,GB-s, 6.5 read and 8 write units:
+  \$5.933$\times 10^{-5}$ for 15 successes & \$0.00396 \\
+\bottomrule
+\end{tabularx}
+\caption{CT6 expected values, computed by hand (all matched).}
+\label{tab:ct6}
+\end{table}
+
 \todo{CT4 handler checks (no dependency call on a hit, \texttt{POST} never
-cached), written by me; CT6.}
+cached), written by me.}
 
 % =====================================================================
 \section{Results}
@@ -705,6 +773,26 @@ Nov 14 & The 30\,s warm-up is part of the k6 run, not a separate step of the
   orchestrator. &
   One timed phase in one tool keeps the warm-up and the measured phase
   exactly adjacent and labelled in every record. \\
+Nov 15 & DynamoDB request units in the cost $C$ are estimated from the
+  dependency's invocations, the injected faults, and the order statuses, and
+  the dependency's invocations and GB-seconds are counted over the measured
+  phase rather than joined by request ID. &
+  DynamoDB does not report request units per call, and the client never sees
+  the dependency's request IDs; the estimate follows the published unit rules
+  for the two operations the dependency makes. \\
+Nov 15 & The CT6 fixture and its expected values were prepared by Claude and
+  checked by me by hand, rather than written by me. &
+  CT6 is independent of the code because its expected values come from a hand
+  computation, not from the module; I repeated that computation. \\
+Nov 15 & The 5\,s recovery buckets start at the end of the outage, and a
+  bucket without requests counts as failing. &
+  The midterm did not fix where the buckets start; starting at $t_\mathrm{end}$
+  makes $R$ a multiple of 5\,s that cannot be negative. \\
+Nov 15 & The metrics are computed with the Python standard library instead of
+  pandas and NumPy. &
+  Nearest-rank percentiles and the window rules are a few lines each, and one
+  dependency fewer keeps the analysis reproducible; matplotlib is still planned
+  for the figures. \\
 \bottomrule
 \end{tabularx}
 \caption{Changes from the midterm plan.}
@@ -813,6 +901,9 @@ Nov 14 & The 30\,s warm-up is part of the k6 run, not a separate step of the
   \item A failure path is worth testing before it is needed: the first real
   orchestrated runs crashed, and the re-queue, give-up, and restore logic
   handled them exactly as CT7 had specified.
+  \item A test suite can pass while missing the edges: CT6 passed on the first
+  run, but deliberate mistakes in the metrics module showed four cases no test
+  looked at, such as a status of exactly 500.
 \end{itemize}
 
 % =====================================================================
@@ -875,6 +966,12 @@ Nov 14 & The 30\,s warm-up is part of the k6 run, not a separate step of the
   Python 3.12 crash of the first real run and corrected the startup estimate
   from that run's records. I committed the code before each run, ran the
   experiments, and checked the manifests.
+  \item Nov 15: Claude wrote the metrics module, the CT6 fixture with its
+  hand-computed expected values, the further tests, and the mutation check, and
+  tested the module on a synthetic run of C3 size. I checked the four expected
+  values of Table~\ref{tab:ct6} by hand myself, ran CT6, and ran the module on
+  the first orchestrated run, comparing its numbers with that run's k6
+  summary.
 \end{itemize}
 
 % =====================================================================
