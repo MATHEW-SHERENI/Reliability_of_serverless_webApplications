@@ -478,7 +478,13 @@ order that reached the database is a transaction of two small items (4 write
 units). The price updater's writes belong to the experiment, not to the API,
 and are not counted. For each run the module writes the row, the windows, and
 5\,s buckets for the C7 time series as CSV files, and for an experiment one
-row for every valid run.
+row for every valid run. A second script (\texttt{analysis/plot\_run.py},
+\texttt{make plot}) draws every metric of one run in a single figure: latency
+percentiles and throughput every 5\,s with a C7 outage shaded, the SLO verdict
+of each minute, failures by cause, a table of all other metrics, and the cost
+per 1{,}000 successful requests split into its five billed parts. The cost
+formula itself returns these parts, so the figure and the metrics row cannot
+disagree.
 
 % =====================================================================
 \section{Architecture as Built}
@@ -708,8 +714,71 @@ cached), written by me.}
 
 % =====================================================================
 \section{Results}
-\todo{SLO verdict matrix; latency and error tables; outage time series;
-cache and concurrency figure; cost table.}
+\subsection{Pilot (Milestone 2)}
+The pilot ran the four configurations under C1 and C4, one run each, through
+the orchestrator in one unattended session on November 16 (experiment
+\texttt{pilot-20261117T034701Z}, commit \texttt{72f507c}). All eight runs were
+valid at the first attempt, the metrics module produced one row per run, and
+the stack was destroyed afterwards. Table~\ref{tab:pilot} gives the main
+values. With one run per cell they are indications rather than results, which
+need five repetitions and the range rule.
+
+\begin{table}[h]
+\centering
+\footnotesize
+\begin{tabular}{@{}llrrrrrrcr@{}}
+\toprule
+\textbf{Cond.} & \textbf{Configuration} & \textbf{Errors} & \textbf{p50} & \textbf{p95}
+  & $\bar{a}$ & $H$ & \textbf{Stale} & \textbf{SLO min.} & \textbf{\$/1{,}000} \\
+\midrule
+C1 & Base        & 0.00\%  & 30.2 & 44.0  & 1.00 & --     & --    & 3 of 3 & 0.00184 \\
+C1 & Retry       & 0.00\%  & 31.8 & 44.3  & 1.00 & --     & --    & 3 of 3 & 0.00184 \\
+C1 & Cache       & 0.00\%  & 15.2 & 43.2  & 0.36 & 70.7\% & 3.4\% & 3 of 3 & 0.00159 \\
+C1 & Retry+Cache & 0.00\%  & 15.7 & 43.0  & 0.37 & 70.5\% & 2.0\% & 3 of 3 & 0.00160 \\
+\midrule
+C4 & Base        & 10.39\% & 31.6 & 45.0  & 1.00 & --     & --    & 0 of 3 & 0.00202 \\
+C4 & Retry       & 1.09\%  & 32.4 & 148.4 & 1.10 & --     & --    & 0 of 3 & 0.00190 \\
+C4 & Cache       & 3.42\%  & 15.2 & 43.4  & 0.38 & 68.9\% & 6.3\% & 0 of 3 & 0.00164 \\
+C4 & Retry+Cache & 0.90\%  & 15.8 & 46.2  & 0.44 & 66.2\% & 6.7\% & 2 of 3 & 0.00163 \\
+\bottomrule
+\end{tabular}
+\caption{Pilot, one run per cell (latency in ms; $\bar{a}$: dependency calls per
+request; $H$: cache hit ratio; Stale: share of cache hits; SLO min.: compliant
+1-minute windows; cost per 1{,}000 successful requests in US dollars).}
+\label{tab:pilot}
+\end{table}
+
+Without faults (C1), Retry behaved like Base, at the same cost, because nothing
+failed. The cache served 71\% of reads without calling the dependency, halved
+the median latency from 30 to 15\,ms, and lowered the cost per 1{,}000
+successful requests by 13\%, but left p95 almost unchanged, because the slowest
+requests are cache misses and orders. Between 2\% and 3\% of cache hits
+returned a price older than the newest one. In the first orchestrated run (C1,
+Base, November 15), API Gateway made up 54\% of the cost, Lambda invocations
+22\%, DynamoDB writes 14\%, Lambda compute 7\%, and DynamoDB reads 3\%, so the
+compute time that retries add is the smallest part of the bill.
+
+Under 10\% transient faults (C4), Base failed 10.4\% of requests. With retries,
+the dependency was called 1.10 times per request, the value predicted for reads
+that need $1 + 0.1 + 0.01 + 0.001$ calls on average and orders that make one,
+and 995 injected faults produced only 98 failed requests. The error rate fell
+to 1.09\%, not to the 0.01\% of H1. The reason lies in the design, not in the
+code: orders are never retried, because a retried write could reserve stock
+twice, and orders are 10\% of the requests. For the whole mix the expected
+error rate is $0.1 \times 0.1 + 0.9 \times 0.1^4 \approx 1.01\%$, which the
+measured 1.09\% matches within its sampling error of about 0.1 percentage
+points; the 0.01\% of H1 applies to reads only, so the final analysis reports
+the error rates of reads and orders separately. Because this floor of about
+1\% coincides with the SLO's error threshold, the per-minute verdicts of Retry
+(0 of 3 minutes compliant) and Retry+Cache (2 of 3) depend on chance and do not
+rank the two. Retries raised p95 from 45 to 148\,ms through the backoff waits,
+still far below 500\,ms, and lowered the cost per 1{,}000 successful requests
+from \$0.00202 to \$0.00190, because the requests they rescued outweighed the
+extra calls. The share of stale cache hits was higher than in C1 (6\% to 7\%);
+whether this is a real effect will show across five repetitions.
+
+\todo{Full experiment: SLO verdict matrix; latency and error tables; outage
+time series; cache and concurrency figure; cost table.}
 
 % =====================================================================
 \section{Discussion}
@@ -793,6 +862,12 @@ Nov 15 & The metrics are computed with the Python standard library instead of
   Nearest-rank percentiles and the window rules are a few lines each, and one
   dependency fewer keeps the analysis reproducible; matplotlib is still planned
   for the figures. \\
+Nov 16 & The expected error rate under C4 with retries (H1) is restated as
+  about 1\% for all requests and 0.01\% for reads, and error rates are reported
+  for reads and orders separately. &
+  The midterm's $0.1^4$ assumed that every request is retried; orders are never
+  retried by design, so about 1\% of all requests fail regardless, as the pilot
+  showed. \\
 \bottomrule
 \end{tabularx}
 \caption{Changes from the midterm plan.}
@@ -904,6 +979,9 @@ Nov 15 & The metrics are computed with the Python standard library instead of
   \item A test suite can pass while missing the edges: CT6 passed on the first
   run, but deliberate mistakes in the metrics module showed four cases no test
   looked at, such as a status of exactly 500.
+  \item A prediction must cover the whole workload: the 0.01\% expected with
+  retries held for reads, but orders, which are never retried, set a floor of
+  about 1\% for all requests, exactly at the SLO's threshold.
 \end{itemize}
 
 % =====================================================================
@@ -972,6 +1050,11 @@ Nov 15 & The metrics are computed with the Python standard library instead of
   values of Table~\ref{tab:ct6} by hand myself, ran CT6, and ran the module on
   the first orchestrated run, comparing its numbers with that run's k6
   summary.
+  \item Nov 16: Claude explained each metric of the first real run, wrote the
+  figure script and the split of the cost into its parts, and interpreted the
+  pilot results, including why the error rate with retries stayed near 1\%. I
+  ran the pilot, the metrics, and the figures, compared the figures of Base and
+  Retry under C4, and destroyed the stack.
 \end{itemize}
 
 % =====================================================================
