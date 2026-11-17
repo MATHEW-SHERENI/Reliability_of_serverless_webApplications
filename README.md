@@ -82,6 +82,7 @@ The virtual environment does not need to be activated: the Makefile calls
 | `make ec2-run` | One full C1 run of the deployed configuration from the EC2 load host |
 | `make experiment PLAN=experiments/<plan>.json` | Run every run of a plan through the orchestrator (M6); default `experiments/smoke.json` |
 | `make metrics RUN=results/<folder>` | Metrics (M7) of one run, or of every valid run of an experiment; writes `metrics.csv` (and `windows.csv`, `buckets.csv` per run) |
+| `make plot RUN=results/<run_id>` | One figure with every metric of a run (`figure.png`, `figure.pdf`): latency and throughput over time, SLO per minute, failures by cause, all metrics, and cost by part |
 
 ## Tests
 

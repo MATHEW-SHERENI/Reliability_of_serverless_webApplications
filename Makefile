@@ -9,7 +9,7 @@ PY := .venv/bin/python
 AWS_PROFILE ?= B10
 export AWS_PROFILE
 
-.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run experiment metrics
+.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run experiment metrics plot
 
 init:
 	$(TF) init
@@ -68,3 +68,8 @@ experiment:
 #   make metrics RUN=results/smoke-20261115T051707Z-001-C1-Base-r1-a1
 metrics:
 	$(PY) analysis/metrics.py $(RUN)
+
+# One figure with every metric of one run (after make metrics), e.g.
+#   make plot RUN=results/smoke-20261115T051707Z-001-C1-Base-r1-a1
+plot:
+	$(PY) analysis/plot_run.py $(RUN)

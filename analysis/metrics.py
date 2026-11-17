@@ -228,10 +228,18 @@ def phase_seconds(records):
     return (max(times) - min(times)) / 1000 * len(records) / (len(records) - 1)
 
 
+def cost_parts(gateway_requests, invocations, gb_seconds, read_units, write_units):
+    """The cost of each billed part, in US dollars; they add up to the run's cost."""
+    return {"API Gateway requests": gateway_requests * PRICE_GATEWAY_REQUEST,
+            "Lambda invocations": invocations * PRICE_INVOCATION,
+            "Lambda compute (GB-s)": gb_seconds * PRICE_GB_SECOND,
+            "DynamoDB reads": read_units * PRICE_READ_UNIT,
+            "DynamoDB writes": write_units * PRICE_WRITE_UNIT}
+
+
 def cost_usd(gateway_requests, invocations, gb_seconds, read_units, write_units):
-    return (gateway_requests * PRICE_GATEWAY_REQUEST + invocations * PRICE_INVOCATION
-            + gb_seconds * PRICE_GB_SECOND + read_units * PRICE_READ_UNIT
-            + write_units * PRICE_WRITE_UNIT)
+    return sum(cost_parts(gateway_requests, invocations, gb_seconds, read_units,
+                          write_units).values())
 
 
 # ------------------------------------------------------------------ one run
