@@ -1,0 +1,17 @@
+{
+  "name": "shakedown",
+  "description": "Before the full experiment: one run each of the conditions the pilot did not test (C2, C3, C5, C6, C7) with the lightest and the heaviest configuration, to find load-host, concurrency or timing problems before 2-hour sessions do. 10 runs, about 45 minutes.",
+  "seed": 5360,
+  "configurations": [
+    "Base",
+    "Retry+Cache"
+  ],
+  "conditions": [
+    "C2",
+    "C3",
+    "C5",
+    "C6",
+    "C7"
+  ],
+  "repetitions": 1
+}

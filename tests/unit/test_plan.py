@@ -123,3 +123,64 @@ def test_start_offset_uses_the_nov_14_smoke_run_numbers():
     from orchestrate.experiment import start_offset_s
     assert start_offset_s(1794719882, 1794719865944) == -16.1    # began 16 s early
     assert start_offset_s(100, None) is None
+
+
+# ------------------------------------------------- sessions and the A/A control (Day 19)
+
+from orchestrate.plan import estimated_seconds  # noqa: E402
+
+WITH_CONTROL = {**FULL, "control": {"configuration": "Base", "condition": "C1"}}
+
+
+def test_pilot_order_is_unchanged_by_the_new_options():
+    # The order the pilot actually ran in on Nov 16 (experiment pilot-20261117T034701Z).
+    ran = [("Cache", "C1"), ("Cache", "C4"), ("Retry+Cache", "C4"), ("Retry", "C4"),
+           ("Retry", "C1"), ("Base", "C4"), ("Retry+Cache", "C1"), ("Base", "C1")]
+    order = run_order(load_plan("experiments/pilot.json"))
+    assert [(r["configuration"], r["condition"]) for r in order] == ran
+    assert not any(r["control"] for r in order)
+
+
+def test_control_adds_one_base_c1_run_to_every_block():
+    order = run_order(WITH_CONTROL)
+    assert len(order) == 145                                  # 5 blocks of 28 + 1
+    for session in range(1, 6):
+        block = [r for r in order if r["repetition"] == session]
+        controls = [r for r in block if r["control"]]
+        assert len(block) == 29 and len(controls) == 1
+        assert (controls[0]["configuration"], controls[0]["condition"]) == ("Base", "C1")
+        assert len({(r["configuration"], r["condition"]) for r in block if not r["control"]}) == 28
+    regular = Counter((r["configuration"], r["condition"]) for r in order if not r["control"])
+    assert set(regular.values()) == {5}                      # still five runs per cell
+
+
+def test_a_session_is_exactly_its_block_of_the_whole_plan():
+    whole = run_order(WITH_CONTROL)
+    for session in range(1, 6):
+        assert run_order(WITH_CONTROL, session) == [r for r in whole if r["repetition"] == session]
+
+
+@pytest.mark.parametrize("session", [0, 6, "1", True])
+def test_bad_sessions_are_rejected(session):
+    with pytest.raises(ValueError):
+        run_order(WITH_CONTROL, session)
+
+
+@pytest.mark.parametrize("control", [
+    {"configuration": "Fast", "condition": "C1"}, {"configuration": "Base", "condition": "C9"},
+    {"configuration": "Base"}, "Base",
+])
+def test_bad_controls_are_rejected(control):
+    with pytest.raises(ValueError):
+        validate({**FULL, "control": control})
+
+
+def test_full_and_shakedown_plan_files():
+    full = load_plan("experiments/full.json")
+    assert len(run_order(full)) == 145 and len(run_order(full, 1)) == 29
+    # Session: 4 configurations x (5 x 210 s + 41 s + 330 s) + 210 s control = 5,894 s
+    # of load, plus 29 x 60 s allowance = 7,634 s (about 2 h 7 min).
+    assert estimated_seconds(run_order(full, 1)) == 7634
+    shakedown = load_plan("experiments/shakedown.json")
+    # 2 configurations x (41 + 330 + 3 x 210) s = 2,002 s, plus 10 x 60 s = 2,602 s.
+    assert len(run_order(shakedown)) == 10 and estimated_seconds(run_order(shakedown)) == 2602

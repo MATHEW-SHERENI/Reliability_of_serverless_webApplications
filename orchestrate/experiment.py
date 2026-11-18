@@ -27,7 +27,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from orchestrate.plan import CONFIGURATIONS, fault_settings, load_plan, run_order  # noqa: E402
+from orchestrate.plan import (CONFIGURATIONS, estimated_seconds, fault_settings,  # noqa: E402
+                              load_plan, run_order)
 
 MAX_CPU_PERCENT = 70
 MAX_ATTEMPTS = 3          # an invalid run is queued again at most twice
@@ -51,11 +52,15 @@ def judge(result):
 
 
 def valid_runs(manifests):
-    """The runs the analysis may use: valid ones only, one per plan cell and repetition."""
+    """The runs the analysis may use: valid ones only, one per plan cell and repetition.
+
+    The A/A control run is kept apart from the regular run of the same cell.
+    """
     chosen = {}
     for m in manifests:
         if m["valid"]:
-            chosen[(m["configuration"], m["condition"], m["repetition"])] = m
+            key = (m["configuration"], m["condition"], m["repetition"], bool(m.get("control")))
+            chosen[key] = m
     return list(chosen.values())
 
 
@@ -81,13 +86,14 @@ def start_offset_s(run_start, measured_start_ms):
 
 
 def run_id_for(experiment_id, number, cell, attempt):
-    config = cell["configuration"].replace("+", "")
+    config = cell["configuration"].replace("+", "") + ("AA" if cell.get("control") else "")
     return f"{experiment_id}-{number:03d}-{cell['condition']}-{config}-r{cell['repetition']}-a{attempt}"
 
 
-def run_experiment(plan, backend, experiment_id, max_attempts=MAX_ATTEMPTS, say=print):
-    """Run every cell of the plan; returns the manifest of every attempt, in order."""
-    queue = deque((cell, 1) for cell in run_order(plan))
+def run_experiment(plan, backend, experiment_id, max_attempts=MAX_ATTEMPTS, say=print,
+                   session=None):
+    """Run every cell of the plan (or of one session); returns every attempt's manifest."""
+    queue = deque((cell, 1) for cell in run_order(plan, session))
     manifests, number = [], 0
     try:
         while queue:
@@ -230,21 +236,43 @@ def _gzip(path):
     path.unlink()
 
 
+def describe(plan, session=None, say=print):
+    """Print the runs and the estimated duration of a plan or session, without AWS."""
+    runs = run_order(plan, session)
+    minutes = estimated_seconds(runs) / 60
+    where = f"session {session} of {plan['repetitions']}" if session else "whole plan"
+    say(f"{plan['name']}, {where}: {len(runs)} runs, about {minutes // 60:.0f} h "
+        f"{minutes % 60:.0f} min")
+    for number, cell in enumerate(runs, 1):
+        say(f"  {number:3d}  {cell['condition']}  {cell['configuration']:12}"
+            f"{'  A/A control' if cell.get('control') else ''}")
+    return runs
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("plan", help="plan file, e.g. experiments/smoke.json")
+    parser.add_argument("--session", type=int, help="run only this repetition's block (1, 2, ...)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="print the run order and the estimated time; touch nothing")
     args = parser.parse_args()
     plan = load_plan(args.plan)
-    experiment_id = f"{plan['name']}-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
+    runs = describe(plan, args.session, say=print if args.dry_run else lambda *a: None)
+    if args.dry_run:
+        return 0
+    stamp = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
+    session = f"-s{args.session}" if args.session else ""
+    experiment_id = f"{plan['name']}{session}-{stamp}"
     backend = AwsBackend()
     if backend.dirty:
         print("warning: uncommitted changes; the manifest records the commit as dirty")
-    print(f"experiment {experiment_id}: {len(run_order(plan))} runs, commit {backend.commit[:7]}")
-    manifests = run_experiment(plan, backend, experiment_id)
+    print(f"experiment {experiment_id}: {len(runs)} runs, about "
+          f"{estimated_seconds(runs) / 60:.0f} min, commit {backend.commit[:7]}")
+    manifests = run_experiment(plan, backend, experiment_id, session=args.session)
     kept = valid_runs(manifests)
-    print(f"done: {len(kept)} of {len(run_order(plan))} planned runs valid, "
+    print(f"done: {len(kept)} of {len(runs)} planned runs valid, "
           f"{len(manifests)} attempts; manifest in results/{experiment_id}/experiment.json")
-    return 0 if len(kept) == len(run_order(plan)) else 1
+    return 0 if len(kept) == len(runs) else 1
 
 
 if __name__ == "__main__":

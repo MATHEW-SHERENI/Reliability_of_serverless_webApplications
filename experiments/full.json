@@ -1,0 +1,25 @@
+{
+  "name": "full",
+  "description": "Full experiment (T3): 4 configurations x 7 conditions x 5 repetitions = 140 runs. One repetition per session (make experiment SESSION=1..5), each with one extra Base C1 run as the A/A control (midterm Section 5): 29 runs, about 2 hours per session.",
+  "seed": 5360,
+  "configurations": [
+    "Base",
+    "Retry",
+    "Cache",
+    "Retry+Cache"
+  ],
+  "conditions": [
+    "C1",
+    "C2",
+    "C3",
+    "C4",
+    "C5",
+    "C6",
+    "C7"
+  ],
+  "repetitions": 5,
+  "control": {
+    "configuration": "Base",
+    "condition": "C1"
+  }
+}

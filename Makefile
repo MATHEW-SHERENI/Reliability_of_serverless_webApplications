@@ -9,7 +9,7 @@ PY := .venv/bin/python
 AWS_PROFILE ?= B10
 export AWS_PROFILE
 
-.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run experiment metrics plot summary
+.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run experiment metrics plot summary plan-check
 
 init:
 	$(TF) init
@@ -62,7 +62,12 @@ ec2-run:
 #   make experiment PLAN=experiments/pilot.json
 PLAN ?= experiments/smoke.json
 experiment:
-	$(PY) orchestrate/experiment.py $(PLAN)
+	$(PY) orchestrate/experiment.py $(PLAN) $(if $(SESSION),--session $(SESSION))
+
+# Print a plan's run order and estimated duration without touching AWS, e.g.
+#   make plan-check PLAN=experiments/full.json SESSION=1
+plan-check:
+	$(PY) orchestrate/experiment.py $(PLAN) --dry-run $(if $(SESSION),--session $(SESSION))
 
 # Metrics (M7) of one run or of every valid run of an experiment, e.g.
 #   make metrics RUN=results/smoke-20261115T051707Z-001-C1-Base-r1-a1
@@ -77,5 +82,7 @@ plot:
 # Summary of an experiment (after make metrics on it): median and range per cell,
 # LaTeX table and comparison figure, e.g.
 #   make summary EXP=results/pilot-20261117T034701Z
+# or, combining the five sessions of the full experiment:
+#   make summary EXP="results/full-s1-* results/full-s2-*" OUT=results/full-summary
 summary:
-	$(PY) analysis/summarize.py $(EXP)
+	$(PY) analysis/summarize.py $(EXP) $(if $(OUT),--out $(OUT))

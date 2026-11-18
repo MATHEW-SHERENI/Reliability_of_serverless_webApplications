@@ -86,7 +86,12 @@ def expected_rates(condition, configuration):
 
 
 def summarise(rows):
-    """One summary row per cell, conditions C1..C7 and configurations in plan order."""
+    """One summary row per cell, conditions C1..C7 and configurations in plan order.
+
+    A/A control runs (control = True) are left out: they measure the noise
+    between two identical runs and must not count as a sixth repetition of Base.
+    """
+    rows = [r for r in rows if not r.get("control")]
     cells = []
     for condition in CONDITIONS:
         for configuration in CONFIGURATIONS:
@@ -209,30 +214,44 @@ def plot_comparison(cells, paths):
 
 # ------------------------------------------------------------------ files
 
-def summarise_experiment(experiment_dir):
-    """Read metrics.csv, write the summary, the table and the figure; return the cells."""
-    experiment_dir = Path(experiment_dir)
-    source = experiment_dir / "metrics.csv"
-    if not source.exists():
-        raise FileNotFoundError(f"{source} missing: run analysis/metrics.py on the experiment")
-    cells = summarise(read_csv(source))
+def summarise_experiments(experiment_dirs, out_dir):
+    """Combine the metrics.csv of one or more experiments (e.g. the five sessions),
+    write the summary, the table and the figure into out_dir, and return the cells."""
+    rows = []
+    for experiment_dir in map(Path, experiment_dirs):
+        source = experiment_dir / "metrics.csv"
+        if not source.exists():
+            raise FileNotFoundError(f"{source} missing: run analysis/metrics.py on the experiment")
+        rows += read_csv(source)
+    cells = summarise(rows)
     if not cells:
-        raise ValueError(f"{source} has no runs")
-    with open(experiment_dir / "summary.csv", "w", newline="") as f:
+        raise ValueError("no runs to summarise")
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with open(out_dir / "summary.csv", "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(cells[0]))
         writer.writeheader()
         writer.writerows(cells)
-    (experiment_dir / "summary.tex").write_text(latex_table(cells))
-    plot_comparison(cells, [experiment_dir / "comparison.png", experiment_dir / "comparison.pdf"])
+    (out_dir / "summary.tex").write_text(latex_table(cells))
+    plot_comparison(cells, [out_dir / "comparison.png", out_dir / "comparison.pdf"])
     return cells
+
+
+def summarise_experiment(experiment_dir):
+    """One experiment, summarised into its own folder."""
+    return summarise_experiments([experiment_dir], experiment_dir)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("experiment", help="results/<experiment_id>, after analysis/metrics.py")
+    parser.add_argument("experiments", nargs="+",
+                        help="one or more results/<experiment_id>, after analysis/metrics.py")
+    parser.add_argument("--out", help="folder for the outputs; required with several experiments")
     args = parser.parse_args()
-    folder = Path(args.experiment)
-    cells = summarise_experiment(folder)
+    if len(args.experiments) > 1 and not args.out:
+        parser.error("several experiments need --out, e.g. --out results/full-summary")
+    folder = Path(args.out or args.experiments[0])
+    cells = summarise_experiments(args.experiments, folder)
     print(f"{'cell':22} {'runs':>4} {'errors':>8} {'reads':>8} {'orders':>8} "
           f"{'p95 ms':>7} {'$/1000':>8}")
     for c in cells:

@@ -334,7 +334,8 @@ def fault_end_ms(faults):
     return (int(faults["RUN_START"]) + int(faults["FAULT_OUTAGE_END_S"])) * 1000
 
 
-IDENTITY = ("run_id", "experiment", "configuration", "condition", "repetition", "attempt", "valid")
+IDENTITY = ("run_id", "experiment", "configuration", "condition", "repetition", "control",
+            "attempt", "valid")
 
 
 def analyse_run(run_dir):

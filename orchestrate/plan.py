@@ -30,6 +30,12 @@ CONDITIONS = {
 
 REQUIRED = ("name", "seed", "configurations", "conditions", "repetitions")
 
+# Seconds of load per run (warm-up + measured phase, from load/workload.js) and a
+# measured allowance for switching settings, collecting logs and uploading files
+# (the pilot's 8 runs took about 33 minutes: 210 s of load plus about 40 s each).
+LOAD_S = {"C1": 210, "C2": 41, "C3": 330, "C4": 210, "C5": 210, "C6": 210, "C7": 210}
+OVERHEAD_S = 60
+
 
 def validate(plan):
     """Raise ValueError if the plan names something unknown or is incomplete."""
@@ -46,6 +52,12 @@ def validate(plan):
         raise ValueError("repetitions must be a whole number of at least 1")
     if type(plan["seed"]) is not int:
         raise ValueError("seed must be a whole number")
+    control = plan.get("control")
+    if control is not None:
+        if (not isinstance(control, dict)
+                or control.get("configuration") not in plan["configurations"]
+                or control.get("condition") not in plan["conditions"]):
+            raise ValueError("control must name a configuration and a condition of the plan")
     return plan
 
 
@@ -54,23 +66,41 @@ def load_plan(path):
         return validate(json.load(f))
 
 
-def run_order(plan):
-    """All runs of the plan in a seeded, randomized, interleaved order.
+def run_order(plan, session=None):
+    """All runs of the plan (or of one session) in a seeded, randomized, interleaved order.
 
     Each repetition is one block containing every configuration-condition cell
-    once, shuffled. Blocks follow each other, so all cells are spread over the
-    whole session: a slow period on the shared cloud hits every configuration
-    alike instead of all repetitions of one.
+    once, shuffled, so a slow period on the shared cloud hits every
+    configuration alike instead of all repetitions of one. A plan with a
+    "control" cell adds one more run of that cell to every block, marked
+    control: the A/A comparison (midterm Section 5), whose difference from the
+    regular run of the same cell shows how much two identical runs differ.
+
+    session: run only that repetition's block (1 = the first). The order of a
+    block does not depend on which sessions are run, because every block is
+    drawn from the same seeded sequence.
     """
     rng = random.Random(plan["seed"])
+    control = plan.get("control")
     order = []
     for repetition in range(1, plan["repetitions"] + 1):
-        block = [(config, condition) for config in plan["configurations"]
+        block = [(config, condition, False) for config in plan["configurations"]
                  for condition in plan["conditions"]]
+        if control:
+            block.append((control["configuration"], control["condition"], True))
         rng.shuffle(block)
-        order += [{"configuration": config, "condition": condition, "repetition": repetition}
-                  for config, condition in block]
-    return order
+        order += [{"configuration": config, "condition": condition, "repetition": repetition,
+                   "control": is_control} for config, condition, is_control in block]
+    if session is None:
+        return order
+    if type(session) is not int or not 1 <= session <= plan["repetitions"]:
+        raise ValueError(f"session must be 1 to {plan['repetitions']}")
+    return [run for run in order if run["repetition"] == session]
+
+
+def estimated_seconds(runs):
+    """Rough wall-clock time of a list of runs: load time plus a fixed allowance per run."""
+    return sum(LOAD_S[run["condition"]] + OVERHEAD_S for run in runs)
 
 
 def fault_settings(condition, run_id, run_start):

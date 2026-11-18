@@ -448,6 +448,24 @@ valid runs, one per cell and repetition. When the experiment ends, even after
 an error or an interruption, the stack is restored to Base with a healthy
 dependency.
 
+The full experiment (\texttt{experiments/full.json}) is run in five sessions,
+one repetition each (\texttt{make experiment SESSION=1} to \texttt{5}), so
+every session contains every cell once in its own random order. Each session
+also runs Base under C1 a second time, at a random position, as the A/A
+control of midterm Section~5: the difference between two identical runs of the
+same session is the noise floor below which no difference is reported as an
+effect. A control run is marked in its manifest and its metrics row, kept apart
+from the regular run of the same cell, and left out of the cell summaries. A
+session holds 29 runs and, from the pilot's pace, takes about two hours;
+\texttt{make plan-check} prints a plan's run order and estimated duration
+without touching AWS. Because the pilot covered only C1 and C4, a shakedown
+plan (\texttt{experiments/shakedown.json}) first runs the five untested
+conditions once with the lightest and the heaviest configuration (Base and
+Retry+Cache, ten runs, about 45 minutes), so that a load-host, concurrency, or
+timing problem appears there rather than in a two-hour session. A test checks
+that the options leave the pilot's order unchanged, so earlier runs remain
+reproducible from their seed.
+
 \subsection{Metrics and Cost Model (M7)}
 The metrics module (\texttt{analysis/metrics.py}) turns the files of one run
 into one row of metrics, with the definitions of midterm Section~4.4 and only
@@ -890,6 +908,12 @@ Nov 16 & The expected error rate under C4 with retries (H1) is restated as
   The midterm's $0.1^4$ assumed that every request is retried; orders are never
   retried by design, so about 1\% of all requests fail regardless, as the pilot
   showed. \\
+Nov 17 & The A/A control is one extra Base run under C1 in each session, and a
+  shakedown of ten runs precedes the five sessions. &
+  The midterm said Base runs twice per session but not under which condition;
+  C1 adds no injected randomness, so the pair measures the cloud's own
+  run-to-run noise. The pilot never ran C2, C3, or C5--C7, and a failure there
+  is cheaper to find in 45 minutes than in a two-hour session. \\
 \bottomrule
 \end{tabularx}
 \caption{Changes from the midterm plan.}
@@ -1082,7 +1106,10 @@ Nov 16 & The expected error rate under C4 with retries (H1) is restated as
   their tests and a mutation check. A version of the summary written by a
   coding agent was set aside unused: I kept the established way of working, to
   protect the quality of the code and the pace of the project. I applied the code, re-ran the pilot's
-  metrics, and produced the summary and the figure.
+  metrics, and produced the summary and the figure. Claude then wrote the
+  session option, the A/A control, the dry run, the full and shakedown plan
+  files, and the combination of sessions in the summary, with their tests; I
+  applied them and checked the printed run orders and durations.
 \end{itemize}
 
 % =====================================================================

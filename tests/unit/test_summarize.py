@@ -108,3 +108,28 @@ def test_summarise_experiment_writes_all_files(tmp_path):
 def test_summarise_experiment_needs_metrics(tmp_path):
     with pytest.raises(FileNotFoundError, match="metrics.csv"):
         summarise_experiment(tmp_path)
+
+
+def test_aa_control_runs_are_left_out_of_the_cells():
+    extra = {"run_id": "aa", "condition": "C1", "configuration": "Base", "control": True,
+             "error_rate": 0.5, "p95_ms": 999.0, "cost_per_1000_usd": 1.0, "hit_ratio": None}
+    cells = summarise(rows() + [extra])
+    c1_base = cell(cells, "C1", "Base")
+    assert c1_base["runs"] == 1 and c1_base["p95_ms_median"] == 44.0
+
+
+def test_several_sessions_are_combined(tmp_path):
+    from analysis.summarize import summarise_experiments
+    fields = sorted({k for r in rows() for k in r})
+    for k, part in enumerate((rows()[:8], rows()[8:])):
+        folder = tmp_path / f"s{k + 1}"
+        folder.mkdir()
+        with open(folder / "metrics.csv", "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fields)
+            writer.writeheader()
+            for r in part:
+                writer.writerow({key: ("" if r.get(key) is None else r.get(key)) for key in fields})
+    cells = summarise_experiments([tmp_path / "s1", tmp_path / "s2"], tmp_path / "all")
+    assert cell(cells, "C4", "Retry")["runs"] == 5           # split across the two folders
+    assert cell(cells, "C4", "Retry")["error_rate_vs_base"] == "lower"
+    assert (tmp_path / "all" / "comparison.png").exists()

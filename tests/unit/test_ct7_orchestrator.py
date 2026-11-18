@@ -111,3 +111,33 @@ def test_the_stack_is_restored_even_when_the_experiment_crashes():
 ])
 def test_judge_applies_the_midterm_rules(result, reason):
     assert judge(result)[1] == reason
+
+
+def test_the_aa_control_is_kept_apart_from_the_regular_run():
+    from orchestrate.experiment import run_id_for
+    base = {"configuration": "Base", "condition": "C1", "repetition": 1, "valid": True}
+    manifests = [{**base, "control": False}, {**base, "control": True},
+                 {"configuration": "Retry", "condition": "C1", "repetition": 1, "valid": True}]
+    assert len(valid_runs(manifests)) == 3                   # the control does not replace Base
+    assert run_id_for("x", 7, {**base, "control": True}, 1) == "x-007-C1-BaseAA-r1-a1"
+    assert run_id_for("x", 8, {**base, "control": False}, 2) == "x-008-C1-Base-r1-a2"
+
+
+def test_a_session_runs_only_its_block():
+    plan = {**PLAN, "repetitions": 2, "control": {"configuration": "Base", "condition": "C1"}}
+    backend = ScriptedBackend([GOOD] * 3)
+    manifests = run_experiment(plan, backend, "t", say=lambda *a: None, session=2)
+    assert len(manifests) == 3 and {m["repetition"] for m in manifests} == {2}
+    assert sum(m["control"] for m in manifests) == 1
+    assert len(backend.experiment) == 3
+
+
+def test_dry_run_description_needs_no_cloud():
+    from orchestrate.experiment import describe
+    lines = []
+    runs = describe({**PLAN, "control": {"configuration": "Base", "condition": "C1"}},
+                    say=lines.append)
+    assert len(runs) == 3
+    # 3 runs of C1: 3 x (210 + 60) s = 810 s = 13.5 min -> "0 h 14 min"
+    assert lines[0] == "t, whole plan: 3 runs, about 0 h 14 min"
+    assert sum("A/A control" in line for line in lines) == 1
