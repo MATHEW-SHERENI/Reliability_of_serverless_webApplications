@@ -476,7 +476,10 @@ is successful responses per second of the measured phase; $\bar{a}$ is the
 mean of the attempts header, in which a cache hit counts zero; $H$ is the share
 of hits among the reads that went through the cache; and a hit is stale when a
 newer version of that product had been logged before the request was sent.
-Each 1-minute window is judged against the SLO. For C7, the recovery time
+Each 1-minute window is judged against the SLO; the windows count from the
+planned start of the measured phase, the clock of the fault schedule, so the
+C7 outage fills exactly the second minute even when the first request leaves a
+second early or late. For C7, the recovery time
 counts 5\,s buckets from the end of the outage in the fault schedule and finds
 the first bucket from which six in a row (30\,s) meet both thresholds; a
 bucket without requests counts as failing, because no answers are no evidence
@@ -817,6 +820,19 @@ the range.}
 \label{fig:pilot}
 \end{figure}
 
+\subsection{Shakedown and First Session}
+The shakedown on November 18 ran the five conditions the pilot had not
+covered, with Base and Retry+Cache, and all ten runs were valid at the first
+attempt. At the C3 peak of 2{,}000 requests per second the load host's CPU
+reached 48\%, below the 70\% limit, and no request was throttled; C2 produced
+100 cold starts in each function. C6 behaved as H1 predicts: every dependency
+call exceeded the 1\,s attempt timeout, so all requests failed in both
+configurations, and Retry+Cache made 2.8 dependency calls per request with p99
+at 3.2\,s, close to the 3\,s deadline. In C7, Retry+Cache sent 10{,}409 calls to
+the failed dependency against 3{,}000 for Base. Session~1 of the full
+experiment followed the same day: 29 of 29 runs were valid at the first
+attempt, in 2\,h 5\,min against an estimate of 2\,h 7\,min.
+
 \todo{Full experiment: SLO verdict matrix; latency and error tables; outage
 time series; cache and concurrency figure; cost table.}
 
@@ -914,6 +930,12 @@ Nov 17 & The A/A control is one extra Base run under C1 in each session, and a
   C1 adds no injected randomness, so the pair measures the cloud's own
   run-to-run noise. The pilot never ran C2, C3, or C5--C7, and a failure there
   is cheaper to find in 45 minutes than in a two-hour session. \\
+Nov 18 & SLO windows are counted from the planned start of the measured phase
+  (RUN\_START) instead of the first measured request. &
+  In the shakedown, a C7 Base run passed one minute of three instead of two:
+  its measured phase did not start exactly on plan, so outage failures spilled
+  into the first minute. The fault schedule runs on the planned clock, and the
+  windows now do too. \\
 \bottomrule
 \end{tabularx}
 \caption{Changes from the midterm plan.}
@@ -1028,6 +1050,9 @@ Nov 17 & The A/A control is one extra Base run under C1 in each session, and a
   \item A prediction must cover the whole workload: the 0.01\% expected with
   retries held for reads, but orders, which are never retried, set a floor of
   about 1\% for all requests, exactly at the SLO's threshold.
+  \item Valid is not the same as right: all ten shakedown runs were valid, yet
+  one C7 run passed one minute fewer than its outage allowed, which revealed
+  windows that did not line up with the fault schedule.
 \end{itemize}
 
 % =====================================================================
@@ -1110,6 +1135,9 @@ Nov 17 & The A/A control is one extra Base run under C1 in each session, and a
   session option, the A/A control, the dry run, the full and shakedown plan
   files, and the combination of sessions in the summary, with their tests; I
   applied them and checked the printed run orders and durations.
+  \item Nov 18: I ran the shakedown and session~1. Claude checked the
+  shakedown's metrics condition by condition, found the misaligned SLO
+  windows, and wrote the fix with a test that fails on the old behaviour.
 \end{itemize}
 
 % =====================================================================

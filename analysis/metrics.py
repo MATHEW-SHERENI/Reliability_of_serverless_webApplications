@@ -186,9 +186,29 @@ def intervals(records, origin_ms, size_s):
     return rows
 
 
-def slo_windows(records, start_ms):
-    """1-minute windows of the measured phase, from its first request."""
-    return intervals(records, start_ms, WINDOW_S)
+def slo_windows(records, origin_ms, duration_s=None):
+    """1-minute windows of the measured phase, counted from origin_ms.
+
+    origin_ms is the planned start of the measured phase (RUN_START), the clock
+    the fault schedule uses, so the C7 outage (60 to 120 s) fills exactly the
+    second window. The measured phase can start a second or so before or after
+    the plan; with duration_s given, the windows are round(duration_s / 60) and a
+    request just outside them joins the nearest one, instead of spilling into a
+    window of a few requests or letting an outage edge fail a healthy minute.
+    """
+    if duration_s is None:
+        return intervals(records, origin_ms, WINDOW_S)
+    count = max(1, round(duration_s / WINDOW_S))
+    groups = {}
+    for r in records:
+        k = min(count - 1, max(0, (r["t"] - origin_ms) // (WINDOW_S * 1000)))
+        groups.setdefault(k, []).append(r)
+    rows = []
+    for k in range(count):
+        summary = summarise(groups.get(k, []))
+        rows.append({"index": k, "start_s": k * WINDOW_S, **summary,
+                     "meets_slo": meets_slo(summary)})
+    return rows
 
 
 def recovery_time_s(records, fault_end_ms):
@@ -283,9 +303,10 @@ def run_metrics(records, log_lines, versions, fault_end_ms=None, origin_ms=None)
     invocations = len(catalog_reports) + len(dep_reports)
     cost = cost_usd(len(measured), invocations, gb_seconds, read_units, write_units)
 
-    windows = slo_windows(measured, start_ms)
-    buckets = intervals(measured, origin_ms if origin_ms is not None else start_ms, BUCKET_S)
     duration = phase_seconds(measured)
+    windows = slo_windows(measured, origin_ms if origin_ms is not None else start_ms,
+                          duration)
+    buckets = intervals(measured, origin_ms if origin_ms is not None else start_ms, BUCKET_S)
     # Reads and orders apart: orders are never retried, so they fail at the fault
     # rate even with retries on, and only reads can be compared with 0.1^4.
     reads = [r for r in measured if r["op"] == "get"]

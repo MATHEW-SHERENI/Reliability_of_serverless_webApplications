@@ -249,8 +249,8 @@ def test_analyse_run_and_experiment_write_csv_files(tmp_path):
     write_gz(run / "records.jsonl.gz", records)
     write_gz(run / "lambda_logs.jsonl.gz", logs)
     write_gz(run / "versions.jsonl.gz", [])
-    faults = {"FAULT_MODE": "outage", "RUN_START": (T0 - 90_000) // 1000,
-              "FAULT_OUTAGE_START_S": 60, "FAULT_OUTAGE_END_S": 120}     # ends at T0 + 30 s
+    faults = {"FAULT_MODE": "outage", "RUN_START": T0 // 1000,
+              "FAULT_OUTAGE_START_S": 10, "FAULT_OUTAGE_END_S": 30}      # ends at T0 + 30 s
     (run / "manifest.json").write_text(json.dumps({
         "run_id": run.name, "experiment": "exp", "configuration": "Base", "condition": "C7",
         "repetition": 1, "attempt": 1, "valid": True, "faults": faults,
@@ -302,3 +302,23 @@ def test_order_failures_use_the_full_failure_rule():
     row, _, _ = run_metrics(records, [], [])
     assert (row["order_requests"], row["order_failed"], row["order_error_rate"]) == (5, 3, 0.6)
     assert row["read_requests"] == 0 and row["read_error_rate"] is None
+
+
+@pytest.mark.parametrize("offset_ms", [-1500, 0, 1500])
+def test_slo_windows_follow_the_fault_schedule_not_the_first_request(offset_ms):
+    # One request per second for 180 s, starting offset_ms before or after the planned
+    # start; every request sent 60-120 s after the planned start fails (the C7 outage).
+    origin = 1_700_000_000_000
+    records = []
+    for k in range(180):
+        t = origin + offset_ms + 1000 * k
+        down = 60_000 <= t - origin < 120_000
+        records.append({"t": t, "ph": "main", "op": "get", "st": 503 if down else 200,
+                        "lat": 20, "rid": None})
+    row, windows, _ = run_metrics(records, [], [], origin_ms=origin)
+    # Counted from the planned start, the outage fills exactly minute 2, whatever the
+    # offset: minutes 1 and 3 pass, minute 2 fails. Counted from the first request, a
+    # 1.5 s late start would have pushed outage failures into minute 1 as well.
+    assert [w["meets_slo"] for w in windows] == [True, False, True]
+    assert (row["slo_windows"], row["slo_compliant_windows"]) == (3, 2)
+    assert sum(w["requests"] for w in windows) == 180          # none lost at the edges
