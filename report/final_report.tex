@@ -484,7 +484,14 @@ percentiles and throughput every 5\,s with a C7 outage shaded, the SLO verdict
 of each minute, failures by cause, a table of all other metrics, and the cost
 per 1{,}000 successful requests split into its five billed parts. The cost
 formula itself returns these parts, so the figure and the metrics row cannot
-disagree.
+disagree. Since the pilot, the error rate is also reported separately for
+reads and for orders. A third script (\texttt{analysis/summarize.py},
+\texttt{make summary}) turns the rows of an experiment into one row per cell
+with the median and range of every metric, applies the range rule against
+Base (no verdict with fewer than five runs per cell), adds the predicted C4
+error rates (reads $p$ for Base and $p^4$ for Retry, orders $p$ everywhere),
+and writes a LaTeX table and a figure comparing the four configurations under
+each condition.
 
 % =====================================================================
 \section{Architecture as Built}
@@ -719,32 +726,33 @@ The pilot ran the four configurations under C1 and C4, one run each, through
 the orchestrator in one unattended session on November 16 (experiment
 \texttt{pilot-20261117T034701Z}, commit \texttt{72f507c}). All eight runs were
 valid at the first attempt, the metrics module produced one row per run, and
-the stack was destroyed afterwards. Table~\ref{tab:pilot} gives the main
-values. With one run per cell they are indications rather than results, which
+the stack was destroyed afterwards. Table~\ref{tab:pilot} and
+Figure~\ref{fig:pilot} give the main values. With one run per cell they are indications rather than results, which
 need five repetitions and the range rule.
 
 \begin{table}[h]
 \centering
 \footnotesize
-\begin{tabular}{@{}llrrrrrrcr@{}}
+\begin{tabular}{@{}llrrrrrrrcr@{}}
 \toprule
-\textbf{Cond.} & \textbf{Configuration} & \textbf{Errors} & \textbf{p50} & \textbf{p95}
-  & $\bar{a}$ & $H$ & \textbf{Stale} & \textbf{SLO min.} & \textbf{\$/1{,}000} \\
+\textbf{Cond.} & \textbf{Configuration} & \textbf{Errors} & \textbf{Reads} & \textbf{Orders}
+  & \textbf{p95} & $\bar{a}$ & $H$ & \textbf{Stale} & \textbf{SLO min.} & \textbf{\$/1{,}000} \\
 \midrule
-C1 & Base        & 0.00\%  & 30.2 & 44.0  & 1.00 & --     & --    & 3 of 3 & 0.00184 \\
-C1 & Retry       & 0.00\%  & 31.8 & 44.3  & 1.00 & --     & --    & 3 of 3 & 0.00184 \\
-C1 & Cache       & 0.00\%  & 15.2 & 43.2  & 0.36 & 70.7\% & 3.4\% & 3 of 3 & 0.00159 \\
-C1 & Retry+Cache & 0.00\%  & 15.7 & 43.0  & 0.37 & 70.5\% & 2.0\% & 3 of 3 & 0.00160 \\
+C1 & Base        & 0.00\%  & 0.00\%  & 0.00\%  & 44.0  & 1.00 & --     & --    & 3 of 3 & 0.00184 \\
+C1 & Retry       & 0.00\%  & 0.00\%  & 0.00\%  & 44.3  & 1.00 & --     & --    & 3 of 3 & 0.00184 \\
+C1 & Cache       & 0.00\%  & 0.00\%  & 0.00\%  & 43.2  & 0.36 & 70.7\% & 3.4\% & 3 of 3 & 0.00159 \\
+C1 & Retry+Cache & 0.00\%  & 0.00\%  & 0.00\%  & 43.0  & 0.37 & 70.5\% & 2.0\% & 3 of 3 & 0.00160 \\
 \midrule
-C4 & Base        & 10.39\% & 31.6 & 45.0  & 1.00 & --     & --    & 0 of 3 & 0.00202 \\
-C4 & Retry       & 1.09\%  & 32.4 & 148.4 & 1.10 & --     & --    & 0 of 3 & 0.00190 \\
-C4 & Cache       & 3.42\%  & 15.2 & 43.4  & 0.38 & 68.9\% & 6.3\% & 0 of 3 & 0.00164 \\
-C4 & Retry+Cache & 0.90\%  & 15.8 & 46.2  & 0.44 & 66.2\% & 6.7\% & 2 of 3 & 0.00163 \\
+C4 & Base        & 10.39\% & 10.43\% & 10.04\% & 45.0  & 1.00 & --     & --    & 0 of 3 & 0.00202 \\
+C4 & Retry       & 1.09\%  & 0.00\%  & 10.95\% & 148.4 & 1.10 & --     & --    & 0 of 3 & 0.00190 \\
+C4 & Cache       & 3.42\%  & 2.94\%  & 7.81\%  & 43.4  & 0.38 & 68.9\% & 6.3\% & 0 of 3 & 0.00164 \\
+C4 & Retry+Cache & 0.90\%  & 0.00\%  & 9.04\%  & 46.2  & 0.44 & 66.2\% & 6.7\% & 2 of 3 & 0.00163 \\
 \bottomrule
 \end{tabular}
-\caption{Pilot, one run per cell (latency in ms; $\bar{a}$: dependency calls per
-request; $H$: cache hit ratio; Stale: share of cache hits; SLO min.: compliant
-1-minute windows; cost per 1{,}000 successful requests in US dollars).}
+\caption{Pilot, one run per cell (error rates of all requests, of reads, and of
+orders; p95 in ms; $\bar{a}$: dependency calls per request; $H$: cache hit
+ratio; Stale: share of cache hits; SLO min.: compliant 1-minute windows; cost
+per 1{,}000 successful requests in US dollars).}
 \label{tab:pilot}
 \end{table}
 
@@ -767,8 +775,13 @@ code: orders are never retried, because a retried write could reserve stock
 twice, and orders are 10\% of the requests. For the whole mix the expected
 error rate is $0.1 \times 0.1 + 0.9 \times 0.1^4 \approx 1.01\%$, which the
 measured 1.09\% matches within its sampling error of about 0.1 percentage
-points; the 0.01\% of H1 applies to reads only, so the final analysis reports
-the error rates of reads and orders separately. Because this floor of about
+points. Split by type, which the metrics now report, Retry failed none of its
+roughly 8{,}100 reads, where $0.1^4$ predicts less than one failure, and
+10.95\% of its orders, so the 0.01\% of H1 holds for reads only. Orders failed
+at 7.8\% to 11.0\% in all four configurations, close to the fault rate,
+because neither mechanism protects them; with the cache alone, reads failed at
+2.94\%, near the $(1 - H) \times 0.1 \approx 3.1\%$ expected when only cache
+misses reach the dependency. Because this floor of about
 1\% coincides with the SLO's error threshold, the per-minute verdicts of Retry
 (0 of 3 minutes compliant) and Retry+Cache (2 of 3) depend on chance and do not
 rank the two. Retries raised p95 from 45 to 148\,ms through the backoff waits,
@@ -776,6 +789,15 @@ still far below 500\,ms, and lowered the cost per 1{,}000 successful requests
 from \$0.00202 to \$0.00190, because the requests they rescued outweighed the
 extra calls. The share of stale cache hits was higher than in C1 (6\% to 7\%);
 whether this is a real effect will show across five repetitions.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{figures/pilot_comparison.pdf}
+\caption{Pilot: the four configurations under C1 (top) and C4 (bottom), one run
+per cell. With five runs per cell the bars will show the median and a whisker
+the range.}
+\label{fig:pilot}
+\end{figure}
 
 \todo{Full experiment: SLO verdict matrix; latency and error tables; outage
 time series; cache and concurrency figure; cost table.}
@@ -1055,6 +1077,12 @@ Nov 16 & The expected error rate under C4 with retries (H1) is restated as
   pilot results, including why the error rate with retries stayed near 1\%. I
   ran the pilot, the metrics, and the figures, compared the figures of Base and
   Retry under C4, and destroyed the stack.
+  \item Nov 17: Claude wrote the split of the error rate into reads and orders,
+  the experiment summary with the range rule, and the comparison figure, with
+  their tests and a mutation check. A version of the summary written by a
+  coding agent was set aside unused: I kept the established way of working, to
+  protect the quality of the code and the pace of the project. I applied the code, re-ran the pilot's
+  metrics, and produced the summary and the figure.
 \end{itemize}
 
 % =====================================================================

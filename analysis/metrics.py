@@ -286,9 +286,19 @@ def run_metrics(records, log_lines, versions, fault_end_ms=None, origin_ms=None)
     windows = slo_windows(measured, start_ms)
     buckets = intervals(measured, origin_ms if origin_ms is not None else start_ms, BUCKET_S)
     duration = phase_seconds(measured)
+    # Reads and orders apart: orders are never retried, so they fail at the fault
+    # rate even with retries on, and only reads can be compared with 0.1^4.
+    reads = [r for r in measured if r["op"] == "get"]
+    orders_sent = [r for r in measured if r["op"] == "post"]
+    read_failed = sum(is_failure(r) for r in reads)
+    order_failed = sum(is_failure(r) for r in orders_sent)
     row = {
         "requests": overall["requests"], "successes": successes, "failed": overall["failed"],
         "error_rate": overall["error_rate"],
+        "read_requests": len(reads), "read_failed": read_failed,
+        "read_error_rate": read_failed / len(reads) if reads else None,
+        "order_requests": len(orders_sent), "order_failed": order_failed,
+        "order_error_rate": order_failed / len(orders_sent) if orders_sent else None,
         "p50_ms": overall["p50_ms"], "p95_ms": overall["p95_ms"], "p99_ms": overall["p99_ms"],
         "duration_s": duration,
         "throughput_rps": successes / duration if duration else None,

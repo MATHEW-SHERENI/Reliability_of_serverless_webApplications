@@ -9,7 +9,7 @@ PY := .venv/bin/python
 AWS_PROFILE ?= B10
 export AWS_PROFILE
 
-.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run experiment metrics plot
+.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run experiment metrics plot summary
 
 init:
 	$(TF) init
@@ -73,3 +73,9 @@ metrics:
 #   make plot RUN=results/smoke-20261115T051707Z-001-C1-Base-r1-a1
 plot:
 	$(PY) analysis/plot_run.py $(RUN)
+
+# Summary of an experiment (after make metrics on it): median and range per cell,
+# LaTeX table and comparison figure, e.g.
+#   make summary EXP=results/pilot-20261117T034701Z
+summary:
+	$(PY) analysis/summarize.py $(EXP)

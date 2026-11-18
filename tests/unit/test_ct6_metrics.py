@@ -273,3 +273,32 @@ def test_analyse_run_refuses_missing_files(tmp_path):
     (tmp_path / "manifest.json").write_text("{}")
     with pytest.raises(FileNotFoundError, match="records.jsonl.gz"):
         analyse_run(tmp_path)
+
+
+def test_error_rates_of_reads_and_orders_apart(ct6):
+    row, _, _ = ct6
+    # Reads: requests 0-3, 5-7, 9-14, 16-19 = 17; failed: 1 (429), 2, 3 (503), 5 (no answer).
+    assert (row["read_requests"], row["read_failed"]) == (17, 4)
+    assert row["read_error_rate"] == 4 / 17
+    # Orders: requests 4, 8, 15 = 3; failed: 4 (503). The warm-up request is not counted.
+    assert (row["order_requests"], row["order_failed"]) == (3, 1)
+    assert row["order_error_rate"] == 1 / 3
+
+
+def test_no_orders_gives_no_order_error_rate():
+    records = [{"t": 1000 * k, "ph": "main", "op": "get", "st": 200, "lat": 20, "rid": None}
+               for k in range(3)]
+    row, _, _ = run_metrics(records, [], [])
+    assert (row["order_requests"], row["order_failed"], row["order_error_rate"]) == (0, 0, None)
+    assert row["read_error_rate"] == 0.0
+
+
+def test_order_failures_use_the_full_failure_rule():
+    # Orders answered 200, 429, no answer (0), 503 and 409: three failures of five;
+    # a 409 (out of stock) is a real answer.
+    statuses = [200, 429, 0, 503, 409]
+    records = [{"t": 1000 * k, "ph": "main", "op": "post", "st": s, "lat": 20, "rid": None}
+               for k, s in enumerate(statuses)]
+    row, _, _ = run_metrics(records, [], [])
+    assert (row["order_requests"], row["order_failed"], row["order_error_rate"]) == (5, 3, 0.6)
+    assert row["read_requests"] == 0 and row["read_error_rate"] is None

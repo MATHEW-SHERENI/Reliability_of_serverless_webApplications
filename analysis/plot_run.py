@@ -66,6 +66,7 @@ def style():
     plt.rcParams.update({
         "font.family": "serif",
         "font.serif": ["Times New Roman", "Liberation Serif", "Nimbus Roman", "DejaVu Serif"],
+        "mathtext.fontset": "stix",          # serif maths, matching the text
         "font.size": 9, "axes.titlesize": 10, "axes.titleweight": "bold",
         "axes.titlelocation": "left", "axes.edgecolor": MUTED, "axes.labelcolor": INK,
         "xtick.color": MUTED, "ytick.color": MUTED, "text.color": INK,
@@ -187,7 +188,9 @@ def panel_table(ax, row):
     rows = [
         ("Requests (measured phase)", fmt(row["requests"])),
         ("Successful / failed", f"{row['successes']:,} / {row['failed']:,}"),
-        ("Error rate", fmt(row["error_rate"], "pct")),
+        ("Error rate: all / reads / orders",
+         f"{fmt(row['error_rate'], 'pct')} / {fmt(row.get('read_error_rate'), 'pct')} / "
+         f"{fmt(row.get('order_error_rate'), 'pct')}"),
         ("p50 / p95 / p99", f"{row['p50_ms']:,.1f} / {row['p95_ms']:,.1f} / "
                             f"{row['p99_ms']:,.1f} ms"),
         ("Throughput", f"{row['throughput_rps']:,.1f} per s over {fmt(row['duration_s'], 's')}"),
