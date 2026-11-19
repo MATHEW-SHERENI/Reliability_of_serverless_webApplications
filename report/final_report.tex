@@ -820,7 +820,7 @@ the range.}
 \label{fig:pilot}
 \end{figure}
 
-\subsection{Shakedown and First Session}
+\subsection{Shakedown and First Sessions}
 The shakedown on November 18 ran the five conditions the pilot had not
 covered, with Base and Retry+Cache, and all ten runs were valid at the first
 attempt. At the C3 peak of 2{,}000 requests per second the load host's CPU
@@ -831,7 +831,13 @@ configurations, and Retry+Cache made 2.8 dependency calls per request with p99
 at 3.2\,s, close to the 3\,s deadline. In C7, Retry+Cache sent 10{,}409 calls to
 the failed dependency against 3{,}000 for Base. Session~1 of the full
 experiment followed the same day: 29 of 29 runs were valid at the first
-attempt, in 2\,h 5\,min against an estimate of 2\,h 7\,min.
+attempt, in 2\,h 5\,min against an estimate of 2\,h 7\,min, and session~2 on the
+same evening was again 29 of 29. With two runs per cell, the C7 outage already
+separates the configurations: the cache alone failed 20\% of requests, Base 33\%,
+Retry 33\%, and Retry+Cache 31\%. Combining retries with the cache gave back most
+of the cache's protection, plausibly because requests that keep retrying for up
+to 3\,s hold their execution environments, so Lambda starts new ones whose caches
+are empty; the five repetitions will show whether the ranges separate.
 
 \todo{Full experiment: SLO verdict matrix; latency and error tables; outage
 time series; cache and concurrency figure; cost table.}
@@ -1137,7 +1143,10 @@ Nov 18 & SLO windows are counted from the planned start of the measured phase
   applied them and checked the printed run orders and durations.
   \item Nov 18: I ran the shakedown and session~1. Claude checked the
   shakedown's metrics condition by condition, found the misaligned SLO
-  windows, and wrote the fix with a test that fails on the old behaviour.
+  windows, and wrote the fix with a test that fails on the old behaviour. In
+  the evening I ran session~2 and the first combined summary of sessions 1 and
+  2, which stopped on C6, where the cost per successful request is undefined;
+  Claude made the summary print ``n/a'' there and added a test for that case.
 \end{itemize}
 
 % =====================================================================
