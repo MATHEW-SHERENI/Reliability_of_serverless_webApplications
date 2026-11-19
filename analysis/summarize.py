@@ -242,6 +242,24 @@ def summarise_experiment(experiment_dir):
     return summarise_experiments([experiment_dir], experiment_dir)
 
 
+def console_table(cells):
+    """The main medians as text lines; "n/a" where a cell has no value, such as the
+    cost per 1,000 successful requests of C6, where no request succeeds."""
+    def show(cell, key, form):
+        value = cell[f"{key}_median"]
+        return "n/a" if value is None else form.format(value)
+    lines = [f"{'cell':22} {'runs':>4} {'errors':>8} {'reads':>8} {'orders':>8} "
+             f"{'p95 ms':>7} {'$/1000':>8}"]
+    for c in cells:
+        lines.append(f"{c['condition'] + ' ' + c['configuration']:22} {c['runs']:>4} "
+                     f"{show(c, 'error_rate', '{:.2%}'):>8} "
+                     f"{show(c, 'read_error_rate', '{:.2%}'):>8} "
+                     f"{show(c, 'order_error_rate', '{:.2%}'):>8} "
+                     f"{show(c, 'p95_ms', '{:.1f}'):>7} "
+                     f"{show(c, 'cost_per_1000_usd', '{:.5f}'):>8}")
+    return lines
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("experiments", nargs="+",
@@ -252,15 +270,8 @@ def main():
         parser.error("several experiments need --out, e.g. --out results/full-summary")
     folder = Path(args.out or args.experiments[0])
     cells = summarise_experiments(args.experiments, folder)
-    print(f"{'cell':22} {'runs':>4} {'errors':>8} {'reads':>8} {'orders':>8} "
-          f"{'p95 ms':>7} {'$/1000':>8}")
-    for c in cells:
-        def pct(key):
-            value = c[f"{key}_median"]
-            return "n/a" if value is None else f"{value:.2%}"
-        print(f"{c['condition'] + ' ' + c['configuration']:22} {c['runs']:>4} "
-              f"{pct('error_rate'):>8} {pct('read_error_rate'):>8} {pct('order_error_rate'):>8} "
-              f"{c['p95_ms_median']:>7.1f} {c['cost_per_1000_usd_median']:>8.5f}")
+    for line in console_table(cells):
+        print(line)
     for name in ("summary.csv", "summary.tex", "comparison.png", "comparison.pdf"):
         print(f"-> {folder / name}")
     return 0

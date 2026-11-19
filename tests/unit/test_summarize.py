@@ -133,3 +133,23 @@ def test_several_sessions_are_combined(tmp_path):
     assert cell(cells, "C4", "Retry")["runs"] == 5           # split across the two folders
     assert cell(cells, "C4", "Retry")["error_rate_vs_base"] == "lower"
     assert (tmp_path / "all" / "comparison.png").exists()
+
+
+def test_a_cell_without_successes_prints_and_plots(tmp_path):
+    # C6: every request fails, so the cost per 1,000 successful requests is undefined.
+    from analysis.summarize import console_table
+    c6 = [{"run_id": f"c6-{k}", "condition": "C6", "configuration": "Base", "error_rate": 1.0,
+           "p95_ms": 1140.0, "cost_per_1000_usd": None, "hit_ratio": None} for k in range(2)]
+    cells = summarise(rows() + c6)
+    lines = console_table(cells)
+    c6_line = next(line for line in lines if line.startswith("C6 Base"))
+    assert "100.00%" in c6_line and c6_line.rstrip().endswith("n/a")
+    assert len(lines) == len(cells) + 1                       # a header and one line per cell
+    fields = sorted({k for r in rows() + c6 for k in r})
+    with open(tmp_path / "metrics.csv", "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        for r in rows() + c6:
+            writer.writerow({k: ("" if r.get(k) is None else r.get(k)) for k in fields})
+    summarise_experiment(tmp_path)                            # figure and table, no error
+    assert "C6 & Base & 2 & 100.00 (100.00--100.00)" in (tmp_path / "summary.tex").read_text()
