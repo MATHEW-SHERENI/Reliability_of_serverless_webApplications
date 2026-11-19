@@ -5,6 +5,9 @@ analysis/metrics.py). Outputs in the same folder:
   summary.csv      one row per cell (condition x configuration): runs, and the
                    median, minimum and maximum of every metric
   summary.tex      the main values as a LaTeX table for the report
+  slo_matrix.tex   output 1 of the midterm: the SLO verdict matrix (configuration x
+                   condition, share of compliant 1-minute windows), as a LaTeX table
+  slo_matrix.png   the same matrix as a heatmap (and slo_matrix.pdf for the report)
   comparison.png   the four configurations side by side, one row per condition
   comparison.pdf   the same figure for the report
 
@@ -34,7 +37,8 @@ from orchestrate.plan import CONDITIONS, CONFIGURATIONS  # noqa: E402
 METRICS = ("error_rate", "read_error_rate", "order_error_rate", "p50_ms", "p95_ms", "p99_ms",
            "throughput_rps", "mean_attempts", "hit_ratio", "stale_rate", "cold_starts",
            "slo_compliant_share", "recovery_s", "cost_per_1000_usd")
-COMPARED = ("error_rate", "p95_ms", "cost_per_1000_usd")   # the outcomes of RQ1 to RQ3
+COMPARED = ("error_rate", "p95_ms", "cost_per_1000_usd",    # the outcomes of RQ1 to RQ3
+            "slo_compliant_share")                          # and of B10's own question
 MIN_RUNS = 5               # repetitions per cell in the full experiment
 MAX_ATTEMPTS = 4           # as MAX_ATTEMPTS in api/reliability.py
 FAULT_RATE = CONDITIONS["C4"]["FAULT_RATE"]
@@ -104,6 +108,12 @@ def summarise(rows):
                 stats = median_range([r.get(metric) for r in runs])
                 cell.update(zip((f"{metric}_median", f"{metric}_min", f"{metric}_max"),
                                 stats))
+            # Output 1 pools the windows of all runs: 10 of 15 compliant = 67%.
+            total = sum(r.get("slo_windows") or 0 for r in runs)
+            compliant = sum(r.get("slo_compliant_windows") or 0 for r in runs)
+            cell["slo_windows_total"] = total
+            cell["slo_compliant_total"] = compliant
+            cell["slo_share_pooled"] = compliant / total if total else None
             read, order = expected_rates(condition, configuration)
             cell["expected_read_error_rate"] = read
             cell["expected_order_error_rate"] = order
@@ -212,6 +222,79 @@ def plot_comparison(cells, paths):
     plt.close(fig)
 
 
+# ------------------------------------------------------------------ SLO verdict matrix
+
+def matrix(cells):
+    """{(configuration, condition): cell} for the cells present, and the conditions in order."""
+    grid = {(c["configuration"], c["condition"]): c for c in cells}
+    conditions = [k for k in CONDITIONS if any(c["condition"] == k for c in cells)]
+    return grid, conditions
+
+
+def share_text(cell):
+    """'67 (10/15)': pooled share of compliant windows in percent, and the window counts."""
+    if cell is None or cell["slo_share_pooled"] is None:
+        return "--"
+    return (f"{cell['slo_share_pooled'] * 100:.0f} "
+            f"({cell['slo_compliant_total']}/{cell['slo_windows_total']})")
+
+
+def slo_matrix_tex(cells):
+    """Output 1 as a booktabs tabular: rows configurations, columns conditions."""
+    grid, conditions = matrix(cells)
+    lines = [r"\begin{tabular}{@{}l" + "c" * len(conditions) + r"@{}}", r"\toprule",
+             r"\textbf{Configuration} & " + " & ".join(rf"\textbf{{{k}}}" for k in conditions)
+             + r" \\", r"\midrule"]
+    for configuration in CONFIGURATIONS:
+        if not any((configuration, k) in grid for k in conditions):
+            continue
+        lines.append(configuration + " & " + " & ".join(
+            share_text(grid.get((configuration, k))) for k in conditions) + r" \\")
+    lines += [r"\bottomrule", r"\end{tabular}", ""]
+    return "\n".join(lines)
+
+
+def plot_slo_matrix(cells, paths):
+    """The matrix as a heatmap: one blue from light (0%) to dark (100%), value in each cell."""
+    from matplotlib.colors import LinearSegmentedColormap
+    grid, conditions = matrix(cells)
+    configurations = [n for n in CONFIGURATIONS if any((n, k) in grid for k in conditions)]
+    ramp = LinearSegmentedColormap.from_list("compliance", ["#eef4fc", "#9cc3f2", "#2a78d6",
+                                                            "#0d366b"])
+    style()
+    fig, ax = plt.subplots(figsize=(1.25 * len(conditions) + 2.2, 0.75 * len(configurations) + 1.6),
+                           layout="constrained")
+    for y, configuration in enumerate(configurations):
+        for x, condition in enumerate(conditions):
+            cell = grid.get((configuration, condition))
+            share = None if cell is None else cell["slo_share_pooled"]
+            colour = "#f0efec" if share is None else ramp(share)
+            ax.add_patch(plt.Rectangle((x, y), 1, 1, facecolor=colour, edgecolor="white",
+                                       linewidth=2))
+            if share is None:
+                label, ink = "--", MUTED
+            else:
+                label = (f"{share:.0%}\n{cell['slo_compliant_total']}/"
+                         f"{cell['slo_windows_total']} min")
+                ink = "white" if share >= 0.55 else INK
+            ax.text(x + 0.5, y + 0.5, label, ha="center", va="center", fontsize=9, color=ink)
+    ax.set_xlim(0, len(conditions))
+    ax.set_ylim(len(configurations), 0)
+    ax.set_xticks([x + 0.5 for x in range(len(conditions))],
+                  [CONDITION_NAMES.get(k, k).replace(" ", "\n", 1) for k in conditions])
+    ax.set_yticks([y + 0.5 for y in range(len(configurations))], configurations)
+    ax.tick_params(length=0)
+    ax.grid(False)
+    for side in ("top", "right", "bottom", "left"):
+        ax.spines[side].set_visible(False)
+    runs = sorted({c["runs"] for c in cells})
+    ax.set_title("Share of compliant 1-minute windows (p95 \u2264 500 ms and errors \u2264 1%), "
+                 f"runs per cell: {', '.join(map(str, runs))}", fontsize=10)
+    for path in paths:
+        fig.savefig(path, dpi=200)
+    plt.close(fig)
+
+
 # ------------------------------------------------------------------ files
 
 def summarise_experiments(experiment_dirs, out_dir):
@@ -234,6 +317,8 @@ def summarise_experiments(experiment_dirs, out_dir):
         writer.writerows(cells)
     (out_dir / "summary.tex").write_text(latex_table(cells))
     plot_comparison(cells, [out_dir / "comparison.png", out_dir / "comparison.pdf"])
+    (out_dir / "slo_matrix.tex").write_text(slo_matrix_tex(cells))
+    plot_slo_matrix(cells, [out_dir / "slo_matrix.png", out_dir / "slo_matrix.pdf"])
     return cells
 
 

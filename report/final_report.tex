@@ -832,14 +832,53 @@ at 3.2\,s, close to the 3\,s deadline. In C7, Retry+Cache sent 10{,}409 calls to
 the failed dependency against 3{,}000 for Base. Session~1 of the full
 experiment followed the same day: 29 of 29 runs were valid at the first
 attempt, in 2\,h 5\,min against an estimate of 2\,h 7\,min, and session~2 on the
-same evening was again 29 of 29. With two runs per cell, the C7 outage already
+same evening and session~3 on November 19 were again 29 of 29 each. With two runs per cell, the C7 outage already
 separates the configurations: the cache alone failed 20\% of requests, Base 33\%,
 Retry 33\%, and Retry+Cache 31\%. Combining retries with the cache gave back most
 of the cache's protection, plausibly because requests that keep retrying for up
 to 3\,s hold their execution environments, so Lambda starts new ones whose caches
 are empty; the five repetitions will show whether the ranges separate.
 
-\todo{Full experiment: SLO verdict matrix; latency and error tables; outage
+\subsection{SLO Verdict Matrix}
+Table~\ref{tab:slo-matrix} is output~1 of the midterm design: for every
+configuration and condition, the share of 1-minute windows that met the SLO
+(p95 at most 500\,ms and at most 1\% errors), pooled over the runs of the cell,
+here the first three sessions. It answers B10's question of when the API
+violates its target. In C1, C3 (up to 2{,}000 requests per second), and C5
+(+300\,ms) every window complied in every configuration. In C2 every window
+failed, because the first requests wait about 1.4\,s while 100 execution
+environments start, which neither mechanism shortens; in C6 every window failed,
+because every dependency call timed out. In C7 exactly the outage minute failed
+in all four configurations, six of nine minutes complying, although the cache
+alone lowered the error rate from 33\% to 20\%: still twenty times the 1\%
+limit. Only C4 separated the configurations, with Retry compliant in 44\% of
+minutes and Retry+Cache in 22\%, against none for Base and Cache; both retry
+configurations sit at the floor of about 1\% set by orders, which are never
+retried, so each minute's verdict is close to a coin flip and the difference
+between them is not an effect. The binary SLO therefore hides most of what the
+mechanisms do: they change how far the API misses its target far more often
+than whether it misses it.
+
+\begin{table}[h]
+\centering
+\footnotesize
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+\textbf{Configuration} & \textbf{C1} & \textbf{C2} & \textbf{C3} & \textbf{C4} & \textbf{C5} & \textbf{C6} & \textbf{C7} \\
+\midrule
+Base & 100 (9/9) & 0 (0/3) & 100 (15/15) & 0 (0/9) & 100 (9/9) & 0 (0/9) & 67 (6/9) \\
+Retry & 100 (9/9) & 0 (0/3) & 100 (15/15) & 44 (4/9) & 100 (9/9) & 0 (0/9) & 67 (6/9) \\
+Cache & 100 (9/9) & 0 (0/3) & 100 (15/15) & 0 (0/9) & 100 (9/9) & 0 (0/9) & 67 (6/9) \\
+Retry+Cache & 100 (9/9) & 0 (0/3) & 100 (15/15) & 22 (2/9) & 100 (9/9) & 0 (0/9) & 67 (6/9) \\
+\bottomrule
+\end{tabular}
+\caption{SLO verdict matrix, sessions 1--3: share of compliant 1-minute windows
+in percent (compliant/all windows, pooled over three runs per cell; C2 has one
+window per run). To be updated with all five sessions.}
+\label{tab:slo-matrix}
+\end{table}
+
+\todo{Full experiment: final verdict matrix; latency and error tables; outage
 time series; cache and concurrency figure; cost table.}
 
 % =====================================================================
@@ -1147,6 +1186,10 @@ Nov 18 & SLO windows are counted from the planned start of the measured phase
   the evening I ran session~2 and the first combined summary of sessions 1 and
   2, which stopped on C6, where the cost per successful request is undefined;
   Claude made the summary print ``n/a'' there and added a test for that case.
+  \item Nov 19: I ran session~3. Claude wrote the SLO verdict matrix (table and
+  heatmap, with tests) and interpreted it. A folder pattern Claude gave me
+  matched the run folders as well as the session folders, so the first summary
+  covered one session only; with a corrected pattern it covered all three.
 \end{itemize}
 
 % =====================================================================

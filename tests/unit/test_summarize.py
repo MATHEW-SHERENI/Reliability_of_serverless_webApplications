@@ -153,3 +153,41 @@ def test_a_cell_without_successes_prints_and_plots(tmp_path):
             writer.writerow({k: ("" if r.get(k) is None else r.get(k)) for k in fields})
     summarise_experiment(tmp_path)                            # figure and table, no error
     assert "C6 & Base & 2 & 100.00 (100.00--100.00)" in (tmp_path / "summary.tex").read_text()
+
+
+# ------------------------------------------------- output 1: the SLO verdict matrix (Day 22)
+
+def test_slo_matrix_pools_the_windows_of_all_runs(tmp_path):
+    from analysis.summarize import plot_slo_matrix, share_text, slo_matrix_tex
+    runs = [  # C7 Base: 2 of 3 minutes, twice; C7 Cache: 3 of 3 and 1 of 3; C1 Base: 3 of 3
+        ("C7", "Base", 2, 3), ("C7", "Base", 2, 3), ("C7", "Cache", 3, 3),
+        ("C7", "Cache", 1, 3), ("C1", "Base", 3, 3)]
+    rows = [{"run_id": f"r{k}", "condition": cond, "configuration": conf,
+             "slo_compliant_windows": ok, "slo_windows": n, "slo_compliant_share": ok / n,
+             "error_rate": 0.0, "p95_ms": 40.0, "cost_per_1000_usd": 0.002}
+            for k, (cond, conf, ok, n) in enumerate(runs)]
+    cells = summarise(rows)
+    c7_base, c7_cache = cell(cells, "C7", "Base"), cell(cells, "C7", "Cache")
+    # Pooled: Base 4 of 6 windows = 2/3; Cache (3 + 1) of 6 = 2/3 as well, although its
+    # two runs differ (range 1/3 to 1): the matrix shows the share, the range rule the spread.
+    assert (c7_base["slo_compliant_total"], c7_base["slo_windows_total"]) == (4, 6)
+    assert c7_base["slo_share_pooled"] == pytest.approx(2 / 3)
+    assert c7_cache["slo_share_pooled"] == pytest.approx(2 / 3)
+    assert (c7_cache["slo_compliant_share_min"], c7_cache["slo_compliant_share_max"]) == \
+        pytest.approx((1 / 3, 1.0))
+    assert c7_cache["slo_compliant_share_vs_base"] == "too few runs"
+    assert share_text(c7_base) == "67 (4/6)" and share_text(None) == "--"
+    tex = slo_matrix_tex(cells)
+    # Columns: only the conditions present (C1, C7); rows: only configurations present.
+    assert r"\textbf{Configuration} & \textbf{C1} & \textbf{C7} \\" in tex
+    assert "Base & 100 (3/3) & 67 (4/6) \\\\" in tex
+    assert "Cache & -- & 67 (4/6) \\\\" in tex               # Cache never ran under C1
+    assert "Retry &" not in tex
+    plot_slo_matrix(cells, [tmp_path / "m.png", tmp_path / "m.pdf"])
+    assert (tmp_path / "m.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_runs_without_window_counts_give_no_share():
+    cells = summarise([{"run_id": "x", "condition": "C1", "configuration": "Base",
+                        "error_rate": 0.0}])
+    assert cell(cells, "C1", "Base")["slo_share_pooled"] is None
