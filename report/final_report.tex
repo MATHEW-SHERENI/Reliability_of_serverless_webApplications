@@ -1058,10 +1058,16 @@ dependency calls per request).}
 \subsection{The Outage over Time (Output 3)}
 Figure~\ref{fig:output3} follows the error rate and p99 every 5\,s through the
 C7 outage, as the median of the five runs of each configuration; where two
-configurations coincide, one line hides the other. The outage begins and ends at
-the same moments for all four configurations, and every configuration was back
-within the SLO in the first 5\,s bucket after the dependency returned, so the
-recovery time $R$ was 0\,s throughout. Without a circuit breaker nothing holds
+configurations coincide, one line hides the other. Base and Retry failed every
+request for the whole minute, Base fast (p99 about 40\,ms, since the failed
+dependency answers at once) and Retry slowly (p99 about 1.2\,s, the backoff
+waits). The cache alone kept the error rate near 40\% for the first half of the
+outage, then lost its protection quickly, approaching 100\% by its end: an entry
+lives 60\,s and cannot be refreshed while the dependency is down, so the cache
+buys about half a minute of partial service, not more. Retry+Cache stayed near
+90\% throughout, consistent with its lower hit ratio. Every configuration was
+back within the SLO in the first 5\,s bucket after the dependency returned, in
+all 20 runs, so the recovery time $R$ was 0\,s throughout. Without a circuit breaker nothing holds
 an API back once its dependency answers again; this is the baseline against
 which the breaker of task T4 (H3) would be measured.
 
