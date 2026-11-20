@@ -16,6 +16,7 @@
 \usepackage{tabularx}
 \usepackage{ragged2e}
 \usepackage{graphicx}
+\usepackage[section]{placeins}  % floats stay in their own section
 \usepackage{enumitem}
 \usepackage{xcolor}
 \usepackage{amsmath}
@@ -67,7 +68,7 @@ uses uv to install Python 3.12 next to the system interpreter and records the
 version in a \texttt{.python-version} file; test dependencies are pinned in
 \texttt{requirements-dev.txt}.
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \footnotesize
 \begin{tabular}{@{}ll@{}}
@@ -595,7 +596,7 @@ fell entirely more than one second inside or outside the window, because the
 moment the dependency made its decision lies somewhere within each call and the
 two clocks can differ slightly; the exact edges are covered by unit tests.
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \footnotesize
 \begin{tabular}{@{}llll@{}}
@@ -762,7 +763,7 @@ an empty window, and a hit ratio computed over all requests instead of cached
 reads), which now have tests, and one was a line without effect, which was
 removed. All 23 remaining changes are caught.
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \footnotesize
 \begin{tabularx}{\linewidth}{@{}l>{\RaggedRight\arraybackslash}Xl@{}}
@@ -825,7 +826,7 @@ the stack was destroyed afterwards. Table~\ref{tab:pilot} and
 Figure~\ref{fig:pilot} give the main values. With one run per cell they are indications rather than results, which
 need five repetitions and the range rule.
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \footnotesize
 \begin{tabular}{@{}llrrrrrrrcr@{}}
@@ -885,7 +886,7 @@ from \$0.00202 to \$0.00190, because the requests they rescued outweighed the
 extra calls. The share of stale cache hits was higher than in C1 (6\% to 7\%);
 whether this is a real effect will show across five repetitions.
 
-\begin{figure}[h]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\linewidth]{figures/pilot_comparison.pdf}
 \caption{Pilot: the four configurations under C1 (top) and C4 (bottom), one run
@@ -933,7 +934,7 @@ runs failed every minute. The binary SLO therefore hides most of what the
 mechanisms do: they change how far the API misses its target far more often
 than whether it misses it.
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \footnotesize
 \begin{tabular}{@{}lccccccc@{}}
@@ -1056,7 +1057,7 @@ noise floor, so every effect reported in Section~\ref{sec:effects-anchor}
 stands. The smallest of them, the 0.38-point lower error rate of Retry in C7, is
 real but negligible in practice.
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \footnotesize
 \begin{tabular}{@{}lrrrrrr@{}}
@@ -1094,7 +1095,7 @@ the outage (C7) retries made 1.91 dependency calls per request against a
 dependency that could not answer, and the cache alone made 0.47 while serving the
 most successful responses, 39.9 per second against 33.3 for Base.
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \footnotesize
 \begin{tabular}{@{}llrrrrrrrr@{}}
@@ -1143,9 +1144,9 @@ buys about half a minute of partial service, not more. Retry+Cache stayed near
 back within the SLO in the first 5\,s bucket after the dependency returned, in
 all 20 runs, so the recovery time $R$ was 0\,s throughout. Without a circuit breaker nothing holds
 an API back once its dependency answers again; this is the baseline against
-which the breaker of task T4 (H3) would be measured.
+which the breaker of task T4 (H3) is measured in Section~\ref{sec:h3}.
 
-\begin{figure}[h]
+\begin{figure}[htbp]
 \centering
 \IfFileExists{figures/output3_c7.pdf}{%
 \includegraphics[width=\linewidth]{figures/output3_c7.pdf}}{%
@@ -1184,7 +1185,7 @@ environments scale; the cold starts of a ramp would need a run without warm-up,
 as C2 does for a burst. The warm-up itself was the largest cold-start storm of
 the run.
 
-\begin{figure}[h]
+\begin{figure}[htbp]
 \centering
 \IfFileExists{figures/output4_c3.pdf}{%
 \includegraphics[width=\linewidth]{figures/output4_c3.pdf}}{%
@@ -1195,7 +1196,7 @@ per configuration.}
 \label{fig:output4}
 \end{figure}
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \footnotesize
 \begin{tabular}{@{}lrrrrrr@{}}
@@ -1242,7 +1243,7 @@ hits returned a price that had already changed. Retries cost nothing extra when
 nothing fails, saved 5\% per successful request under transient faults, and cost
 64\% more in the outage; with the cache, 48\% more.
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \footnotesize
 \begin{tabular}{@{}lrrrrrrr@{}}
@@ -1265,8 +1266,145 @@ undefined in C6) and the share of cache hits that were stale.}
 \label{tab:output5}
 \end{table}
 
-\todo{C7 with the breaker (five repetitions) against the C7 runs above (H3);
-hypotheses H1--H3 marked supported, not supported, or inconclusive.}
+
+\subsection{Circuit Breaker in the Outage (H3)}\label{sec:h3}
+The breaker experiment ran on November 20 from commit \texttt{7373704}: 20 runs,
+all valid, in 22 attempts. Two attempts were invalid and were repeated
+automatically, the first invalid attempts of the whole project. In the first,
+the laptop could not reach the Lambda API to switch the configuration, a
+connection error before k6 started; in the second, the load host did not upload
+its k6 files, so there was nothing to analyse. Both runs were repeated at the
+end of the session and were valid. Table~\ref{tab:h3} compares each breaker
+configuration with the same configuration without the breaker, taken from the
+C7 runs of the full experiment, which used the same seed, workload, and outage.
+An arrow marks a difference that passes the range rule and, for errors, p95,
+and cost, the noise floor. One caution applies: the two sets of runs were made
+on different days, while the noise floor was measured within a session.
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\begin{tabular}{@{}lrrrrrrrr@{}}
+\toprule
+\textbf{Configuration} & \textbf{Errors} & \textbf{Reads} & \textbf{Orders} & \textbf{p95} & \textbf{p99} & $\bar{a}$ & $R$ & \textbf{\$/1{,}000} \\
+ & (\%) & (\%) & (\%) & (ms) & (ms) & & (s) & ($10^{-3}$) \\
+\midrule
+Base & 33.3 & 33.6 & 31.0 & 47 & 56 & 1.00 & 0 & 2.60 \\
+Breaker & 34.7\,$\uparrow$ & 34.9\,$\uparrow$ & 32.5\,$\uparrow$ & 46 & 54 & 0.66\,$\downarrow$ & 5\,$\uparrow$ & 2.49 \\
+\midrule
+Retry & 33.0 & 33.1 & 31.1 & 1,055 & 1,244 & 1.91 & 0 & 4.28 \\
+Retry+Breaker & 38.6\,$\uparrow$ & 39.0\,$\uparrow$ & 35.8\,$\uparrow$ & 48\,$\downarrow$ & 720\,$\downarrow$ & 0.68\,$\downarrow$ & 10\,$\uparrow$ & 2.75\,$\downarrow$ \\
+\midrule
+Cache & 20.1 & 18.9 & 31.0 & 44 & 50 & 0.47 & 0 & 1.92 \\
+Cache+Breaker & 9.1\,$\downarrow$ & 6.4\,$\downarrow$ & 34.2\,$\uparrow$ & 43 & 50 & 0.26\,$\downarrow$ & 10\,$\uparrow$ & 1.62\,$\downarrow$ \\
+\midrule
+Retry+Cache & 31.1 & 31.1 & 31.0 & 1,049 & 1,241 & 1.43 & 0 & 3.84 \\
+Retry+Cache+Breaker & 36.4 & 36.6 & 35.3\,$\uparrow$ & 45\,$\downarrow$ & 681\,$\downarrow$ & 0.31\,$\downarrow$ & 10\,$\uparrow$ & 2.41\,$\downarrow$ \\
+\bottomrule
+\end{tabular}
+\caption{C7 without and with the breaker, median of five runs each. An arrow
+marks a difference that passes the range rule and the noise floor; $\bar{a}$ is
+dependency calls per request.}
+\label{tab:h3}
+\end{table}
+
+H3 has three parts. The first is that an open breaker answers at near
+warm-path latency instead of waiting. This held, but what the breaker saved was
+not the timeouts that the hypothesis named: in C7 the stopped dependency answers
+at once, so Base already failed in about 40\,ms. The waiting was the retry
+policy's backoff. With retries, the breaker cut p95 from about 1{,}050\,ms to
+45--48\,ms, and dependency calls per request from 1.91 to 0.68 (Retry) and from
+1.43 to 0.31 (Retry+Cache); the fewer calls also cut the cost per successful
+request by 36\% and 37\%. Figure~\ref{fig:h3} shows why p99 fell less, to about
+700\,ms: every 15\,s, the half-open probe of each environment goes through the
+retry policy and waits out its backoff, which appears as spikes. With the
+cache, the breaker turned expired entries into answers. Cache+Breaker served
+16.8\% of its reads from the fallback, its read error rate fell from 18.9\% to
+6.4\%, and its error rate stayed between 20\% and 30\% for the whole outage
+instead of climbing towards 90\% after 30\,s. Of these fallback reads, 5.9\%
+returned a price that had already changed (median), compared with 3.4\% of
+ordinary cache hits in C7.
+
+The second part is that recovery is bounded by the 15\,s cooldown. It was: $R$
+was 5\,s for Breaker and 10\,s for the other three (medians), and at most 15\,s
+in every run, against 0\,s without the breaker. This is the price of the
+breaker. After the dependency returns, each environment's breaker stays open
+until its cooldown ends and its probe succeeds, so requests keep failing for a
+few seconds; the median environment closed 2.5 to 9.6\,s after the outage
+(Table~\ref{tab:degraded}). Orders, which have no fallback, therefore failed
+more often with every breaker configuration (31\% without, 32 to 36\% with),
+and so did all requests where the fallback had nothing to serve: the error rate
+rose by 1.3 points with Breaker and by 5.6 points with Retry+Breaker.
+
+The third part is that the time to open grows with concurrency. The data are
+consistent with it but cannot show it. Without retries, about two environments
+served the whole outage; with retries, 40 and 32, because each request lasted
+longer and Lambda added environments to keep up. Breakers opened after a median
+of 1.6\,s with two environments and 3.8\,s with 40, and in a typical
+Retry+Breaker run the last environment opened only after 37\,s, because each
+new environment starts with a closed breaker and has to see five failures of
+its own. In C7, however, concurrency changes only together with the
+configuration: a retried request also takes longer to fail, and Cache+Breaker,
+with two environments, opened slowest (6.2\,s), because cache hits never reach
+the breaker. Figure~\ref{fig:opening} shows two clusters with no trend inside
+either. Separating concurrency from configuration would need C7 at several
+arrival rates.
+
+The same per-environment state explains why Retry+Cache+Breaker did not gain
+what Cache+Breaker gained. Its reads were spread over about 32 environments,
+each with its own small cache, so only 1.2\% of reads found an entry to fall
+back on, and its error rate (36.4\%, with one run at 26.6\%) could not be told
+apart from that of Retry+Cache. This is the limit that H2 describes for the
+cache. In summary, H3 is supported for fast answers while the breaker is open
+(with the retry backoff, not timeouts, as the waiting removed) and for recovery
+bounded by the cooldown; that the time to open grows with concurrency is
+inconclusive.
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+\textbf{Configuration} & \textbf{Environments} & \textbf{Open after} & \textbf{Last open} & \textbf{Closed after} & \textbf{Fallback reads} & \textbf{Outdated} \\
+ & & (s) & (s) & (s) & (\% of reads) & (\% of fallbacks) \\
+\midrule
+Breaker & 2 & 1.6 & 3.0 & 2.5 & 0.0 & -- \\
+Retry+Breaker & 40 & 3.8 & 37.1 & 9.6 & 0.0 & -- \\
+Cache+Breaker & 2 & 6.2 & 12.1 & 3.9 & 16.8 & 5.9 \\
+Retry+Cache+Breaker & 32 & 4.3 & 22.1 & 8.6 & 1.2 & 10.3 \\
+\bottomrule
+\end{tabular}
+\caption{Breakers per execution environment, medians over five runs:
+environments that served requests during the outage; seconds from the outage
+start until the median and the last environment's breaker opened; seconds from
+the outage end until the median environment's breaker closed; and reads served
+by the stale fallback.}
+\label{tab:degraded}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\IfFileExists{figures/h3_c7.pdf}{%
+\includegraphics[width=\linewidth]{figures/h3_c7.pdf}}{%
+\fbox{\parbox{0.9\linewidth}{\centering figures/h3\_c7.pdf missing: copy it
+from results/h3/}}}
+\caption{C7 without (dashed) and with the breaker (solid): error rate and p99
+every 5\,s, outage shaded, median of five runs per configuration.}
+\label{fig:h3}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\IfFileExists{figures/h3_opening.pdf}{%
+\includegraphics[width=0.6\linewidth]{figures/h3_opening.pdf}}{%
+\fbox{\parbox{0.6\linewidth}{\centering figures/h3\_opening.pdf missing: copy it
+from results/h3/}}}
+\caption{Median time for an environment's breaker to open against the number of
+environments serving the outage, one point per run.}
+\label{fig:opening}
+\end{figure}
+
+\todo{Hypotheses H1 and H2 marked supported, not supported, or inconclusive.}
 
 % =====================================================================
 \section{Discussion}
@@ -1276,7 +1414,7 @@ limitations.}
 % =====================================================================
 \section{Differences from the Midterm Plan}
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \footnotesize
 \begin{tabularx}{\linewidth}{@{}l>{\RaggedRight}X>{\RaggedRight\arraybackslash}X@{}}
