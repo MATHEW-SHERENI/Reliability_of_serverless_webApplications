@@ -879,6 +879,7 @@ run).}
 \end{table}
 
 \subsection{Effects of the Mechanisms}
+\label{sec:effects-anchor}
 Table~\ref{tab:effects} gives the median and range of the five runs of every
 cell. A difference from Base counts as an effect only where the two ranges do
 not overlap (midterm Section~4.6).
@@ -968,9 +969,116 @@ empty cache. The two mechanisms do not simply add up; under a sustained outage,
 adding retries to a cache makes the API less reliable, slower, and more
 expensive.
 
-\todo{A/A noise floor; outage time series (output 3); C3 figure of hit ratio,
-p95, cold starts and concurrency against arrival rate (output 4); hypotheses
-H1--H3 marked supported, not supported, or inconclusive.}
+\subsection{A/A Noise Floor}
+Each session ran Base under C1 twice (Table~\ref{tab:aa}). The two identical
+runs never differed in error rate, differed by at most 4.4\,ms in p95, and by at
+most 0.018 thousandths of a dollar, about 1\%, in cost per 1{,}000 successful
+requests. These largest gaps are the noise floor of midterm Section~5.2: a
+difference from Base counts as an effect only if it passes the range rule and is
+larger than the floor. Of the 63 comparisons with Base (21 cells, three
+outcomes), 25 passed the range rule (18 lower and 7 higher), 35 were
+inconclusive, and 3 were undefined (the cost in C6); all 25 were larger than the
+noise floor, so every effect reported in Section~\ref{sec:effects-anchor}
+stands. The smallest of them, the 0.38-point lower error rate of Retry in C7, is
+real but negligible in practice.
+
+\begin{table}[h]
+\centering
+\footnotesize
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+\textbf{Session} & \multicolumn{2}{c}{\textbf{Errors (\%)}} & \multicolumn{2}{c}{\textbf{p95 (ms)}} & \multicolumn{2}{c}{\textbf{\$/1{,}000 ($10^{-3}$)}} \\
+ & Base & A/A & Base & A/A & Base & A/A \\
+\midrule
+1 & 0.00 & 0.00 & 51.2 & 53.1 & 1.857 & 1.872 \\
+2 & 0.00 & 0.00 & 43.3 & 42.8 & 1.846 & 1.832 \\
+3 & 0.00 & 0.00 & 52.0 & 47.6 & 1.864 & 1.846 \\
+4 & 0.00 & 0.00 & 49.9 & 47.9 & 1.854 & 1.848 \\
+5 & 0.00 & 0.00 & 48.4 & 49.0 & 1.850 & 1.851 \\
+\midrule
+Noise floor & \multicolumn{2}{c}{0.00} & \multicolumn{2}{c}{4.4} & \multicolumn{2}{c}{0.018} \\
+\bottomrule
+\end{tabular}
+\caption{A/A comparison: the regular Base C1 run of each session and its
+identical control run; the noise floor is the largest gap.}
+\label{tab:aa}
+\end{table}
+
+\subsection{Latency and Errors under Faults (Output 2)}
+Table~\ref{tab:output2} is output~2 of the midterm design, for the four fault
+conditions. Under transient faults (C4) the measured read error rates match the
+analytical ones: 10.01\% for Base against $p = 10\%$, and 0.02\% for Retry
+against $p^4 = 0.01\%$, which is one or two failed reads per run where theory
+expects 0.8. Retries raised throughput of successful responses from 45.0 to
+49.5 per second, at 1.10 dependency calls per request; with the cache, the same
+throughput needed only 0.43 calls. The combination kept p95 at 50\,ms, but the
+retries remain visible in its p99 of 193\,ms. A slow dependency (C5) left every
+configuration about 300\,ms slower and error-free; the cache halved the
+dependency calls (0.55 per request) but not the latency, since a third of reads
+still miss. In C6 nothing succeeded, and retries tripled the time to fail. In
+the outage (C7) retries made 1.91 dependency calls per request against a
+dependency that could not answer, and the cache alone made 0.47 while serving the
+most successful responses, 39.9 per second against 33.3 for Base.
+
+\begin{table}[h]
+\centering
+\footnotesize
+\begin{tabular}{@{}llrrrrrrrr@{}}
+\toprule
+\textbf{Cond.} & \textbf{Configuration} & \textbf{p50} & \textbf{p95} & \textbf{p99} & \textbf{Errors (\%)} & \textbf{Reads (\%)} & \textbf{Predicted (\%)} & \textbf{Req./s} & $\bar{a}$ \\
+\midrule
+C4 & Base & 34.0 & 46.6 & 57.2 & 9.98 & 10.01 & 10.00 & 45.0 & 1.00 \\
+C4 & Retry & 36.7 & 145.3 & 244.2 & 1.03 & 0.02 & 0.01 & 49.5 & 1.10 \\
+C4 & Cache & 16.9 & 45.3 & 51.3 & 3.74 & 3.05 & -- & 48.1 & 0.38 \\
+C4 & Retry+Cache & 17.6 & 50.0 & 192.7 & 1.08 & 0.00 & -- & 49.5 & 0.43 \\
+\midrule
+C5 & Base & 334.8 & 347.2 & 352.9 & 0.00 & 0.00 & -- & 50.0 & 1.00 \\
+C5 & Retry & 334.3 & 347.1 & 352.9 & 0.00 & 0.00 & -- & 50.0 & 1.00 \\
+C5 & Cache & 329.8 & 346.0 & 352.2 & 0.00 & 0.00 & -- & 50.0 & 0.55 \\
+C5 & Retry+Cache & 330.9 & 347.3 & 352.5 & 0.00 & 0.00 & -- & 50.0 & 0.56 \\
+\midrule
+C6 & Base & 1,018.0 & 1,134.3 & 1,171.2 & 100.00 & 100.00 & -- & 0.0 & 1.00 \\
+C6 & Retry & 3,017.6 & 3,157.1 & 3,199.9 & 100.00 & 100.00 & -- & 0.0 & 2.80 \\
+C6 & Cache & 1,018.0 & 1,138.8 & 1,174.7 & 100.00 & 100.00 & -- & 0.0 & 1.00 \\
+C6 & Retry+Cache & 3,017.7 & 3,160.4 & 3,201.2 & 100.00 & 100.00 & -- & 0.0 & 2.80 \\
+\midrule
+C7 & Base & 32.4 & 47.1 & 56.0 & 33.33 & 33.58 & -- & 33.3 & 1.00 \\
+C7 & Retry & 39.3 & 1,055.1 & 1,243.6 & 32.95 & 33.14 & -- & 33.5 & 1.91 \\
+C7 & Cache & 19.0 & 43.6 & 50.4 & 20.12 & 18.91 & -- & 39.9 & 0.47 \\
+C7 & Retry+Cache & 32.1 & 1,048.9 & 1,240.6 & 31.10 & 31.11 & -- & 34.5 & 1.43 \\
+\bottomrule
+\end{tabular}
+\caption{Output 2: medians of five runs (latency in ms; reads measured against
+the analytical $p$ and $p^4$ with $p = 0.1$, where the cache does not make the
+prediction depend on the hit ratio; successful responses per second; $\bar{a}$:
+dependency calls per request).}
+\label{tab:output2}
+\end{table}
+
+\subsection{The Outage over Time (Output 3)}
+Figure~\ref{fig:output3} follows the error rate and p99 every 5\,s through the
+C7 outage, as the median of the five runs of each configuration; where two
+configurations coincide, one line hides the other. The outage begins and ends at
+the same moments for all four configurations, and every configuration was back
+within the SLO in the first 5\,s bucket after the dependency returned, so the
+recovery time $R$ was 0\,s throughout. Without a circuit breaker nothing holds
+an API back once its dependency answers again; this is the baseline against
+which the breaker of task T4 (H3) would be measured.
+
+\begin{figure}[h]
+\centering
+\IfFileExists{figures/output3_c7.pdf}{%
+\includegraphics[width=\linewidth]{figures/output3_c7.pdf}}{%
+\fbox{\parbox{0.9\linewidth}{\centering figures/output3\_c7.pdf missing: copy it
+from results/full-summary/}}}
+\caption{Output 3: error rate and p99 every 5\,s during C7 (outage shaded),
+median of five runs per configuration.}
+\label{fig:output3}
+\end{figure}
+
+\todo{C3 figure of hit ratio, p95, cold starts and concurrency against arrival
+rate (output 4); cost table (output 5); hypotheses H1--H3 marked supported, not
+supported, or inconclusive.}
 
 % =====================================================================
 \section{Discussion}
@@ -1289,6 +1397,11 @@ Nov 18 & SLO windows are counted from the planned start of the measured phase
   that now follows every experiment (metrics, a figure per run, and the
   summaries), fixed the run figure for runs without any successful request, and
   interpreted the final results.
+  \item Nov 19, late: Claude wrote outputs 2 and 3, the A/A noise floor, and
+  the judgement of every comparison by the range rule and the noise floor, with
+  tests; the tests caught one of Claude's own mistakes, an edge bucket reached
+  by only one run of two being treated as a median. I ran the analysis on the
+  five sessions and checked the outage figure.
 \end{itemize}
 
 % =====================================================================
