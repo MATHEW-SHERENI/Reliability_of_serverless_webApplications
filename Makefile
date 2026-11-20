@@ -9,7 +9,7 @@ PY := .venv/bin/python
 AWS_PROFILE ?= B10
 export AWS_PROFILE
 
-.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run experiment metrics plot summary plan-check results
+.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run experiment metrics plot summary plan-check results analyze analyze-quick
 
 init:
 	$(TF) init
@@ -92,3 +92,11 @@ summary:
 #   make results PLAN=full
 results:
 	$(PY) analysis/pipeline.py $(if $(PLAN),$(notdir $(basename $(PLAN))),--all)
+
+# Every table and figure of the full experiment from its raw files (outputs 1-3,
+# A/A noise floor, effects); analyze-quick reuses each run's metrics (seconds).
+analyze:
+	$(PY) analysis/pipeline.py full
+
+analyze-quick:
+	$(PY) analysis/pipeline.py full --quick

@@ -8,6 +8,8 @@ analysis/metrics.py). Outputs in the same folder:
   slo_matrix.tex   output 1 of the midterm: the SLO verdict matrix (configuration x
                    condition, share of compliant 1-minute windows), as a LaTeX table
   slo_matrix.png   the same matrix as a heatmap (and slo_matrix.pdf for the report)
+  output2_rq1.tex, output3_c7.png/.pdf, aa.csv/.tex, effects.csv
+                   outputs 2 and 3 and the A/A noise floor (analysis/outputs.py)
   comparison.png   the four configurations side by side, one row per condition
   comparison.pdf   the same figure for the report
 
@@ -297,7 +299,7 @@ def plot_slo_matrix(cells, paths):
 
 # ------------------------------------------------------------------ files
 
-def summarise_experiments(experiment_dirs, out_dir):
+def summarise_experiments(experiment_dirs, out_dir, say=None):
     """Combine the metrics.csv of one or more experiments (e.g. the five sessions),
     write the summary, the table and the figure into out_dir, and return the cells."""
     rows = []
@@ -319,7 +321,34 @@ def summarise_experiments(experiment_dirs, out_dir):
     plot_comparison(cells, [out_dir / "comparison.png", out_dir / "comparison.pdf"])
     (out_dir / "slo_matrix.tex").write_text(slo_matrix_tex(cells))
     plot_slo_matrix(cells, [out_dir / "slo_matrix.png", out_dir / "slo_matrix.pdf"])
+    from analysis.outputs import write_outputs
+    info = write_outputs(rows, experiment_dirs, cells, out_dir)
+    if say:
+        for line in outputs_report(info):
+            say(line)
     return cells
+
+
+def outputs_report(info):
+    """Text lines on the A/A noise floor and on which differences from Base count."""
+    floor = info["floor"]
+    if not info["pairs"]:
+        lines = ["  A/A: no control runs, so no noise floor"]
+    else:
+        lines = [f"  A/A noise floor from {info['pairs']} session(s): errors "
+                 f"{floor['error_rate'] * 100:.2f} points, p95 {floor['p95_ms']:.1f} ms, "
+                 f"cost {floor['cost_per_1000_usd'] * 1000:.3f} thousandths of a dollar"]
+    counts = {}
+    for e in info["effects"]:
+        counts[e["final"]] = counts.get(e["final"], 0) + 1
+    if counts:
+        lines.append("  comparisons with Base: " + ", ".join(
+            f"{n} {verdict}" for verdict, n in sorted(counts.items())))
+    for e in info["effects"]:
+        if e["final"] == "below noise floor":
+            lines.append(f"    below the noise floor: {e['condition']} {e['configuration']} "
+                         f"{e['metric']}")
+    return lines
 
 
 def summarise_experiment(experiment_dir):
@@ -354,7 +383,7 @@ def main():
     if len(args.experiments) > 1 and not args.out:
         parser.error("several experiments need --out, e.g. --out results/full-summary")
     folder = Path(args.out or args.experiments[0])
-    cells = summarise_experiments(args.experiments, folder)
+    cells = summarise_experiments(args.experiments, folder, say=print)
     for line in console_table(cells):
         print(line)
     for name in ("summary.csv", "summary.tex", "comparison.png", "comparison.pdf"):

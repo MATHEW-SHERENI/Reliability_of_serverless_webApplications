@@ -58,9 +58,11 @@ def process_experiment(folder, say=print):
     return len(rows)
 
 
-def process(results_dir=RESULTS, plan_name=None, say=print):
+def process(results_dir=RESULTS, plan_name=None, say=print, quick=False):
     """Process the experiments (of one plan, or all), then each plan's combined summary.
 
+    quick: keep each run's metrics and figure as they are and only rebuild the
+    summaries and outputs from the existing metrics.csv files (seconds, not minutes).
     Returns the folders of the combined summaries written.
     """
     found = experiments(results_dir, plan_name)
@@ -71,13 +73,20 @@ def process(results_dir=RESULTS, plan_name=None, say=print):
     say(f"{len(found)} experiment(s):")
     by_plan = {}
     for folder, name in found:
-        if process_experiment(folder, say):
+        if quick:
+            if (folder / "metrics.csv").exists():
+                summarise_experiment(folder)
+                by_plan.setdefault(name, []).append(folder)
+                say(f"  {folder.name}: summary rebuilt from its metrics.csv")
+            else:
+                say(f"  {folder.name}: no metrics.csv yet; run without --quick")
+        elif process_experiment(folder, say):
             by_plan.setdefault(name, []).append(folder)
     combined = []
     for name, folders in by_plan.items():
         if len(folders) > 1:
             out = Path(results_dir) / f"{name}-summary"
-            summarise_experiments(folders, out)
+            summarise_experiments(folders, out, say=say)
             say(f"  combined summary of {len(folders)} {name} experiments -> {out}")
             combined.append(out)
     return combined
@@ -93,7 +102,7 @@ def after_experiment(experiment_id, plan_name, results_dir=RESULTS, say=print):
                    if (folder / "metrics.csv").exists()]
         if len(folders) > 1:
             out = Path(results_dir) / f"{plan_name}-summary"
-            summarise_experiments(folders, out)
+            summarise_experiments(folders, out, say=say)
             say(f"  combined summary of {len(folders)} {plan_name} experiments -> {out}")
         return True
     except Exception as err:                                    # noqa: BLE001
@@ -106,10 +115,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("plan", nargs="?", help="plan name, e.g. full, pilot or shakedown")
     parser.add_argument("--all", action="store_true", help="every experiment in results/")
+    parser.add_argument("--quick", action="store_true",
+                        help="only rebuild summaries and outputs from existing metrics")
     args = parser.parse_args()
     if not args.plan and not args.all:
         parser.error("give a plan name (e.g. full) or --all")
-    process(RESULTS, None if args.all else args.plan)
+    process(RESULTS, None if args.all else args.plan, quick=args.quick)
     return 0
 
 
