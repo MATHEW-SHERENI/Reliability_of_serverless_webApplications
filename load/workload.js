@@ -183,6 +183,7 @@ export default function () {
     att: header(res, 'X-Attempts'), cache: header(res, 'X-Cache'),
     cold: header(res, 'X-Cold-Start'), env: header(res, 'X-Env-Id'),
     ver: header(res, 'X-Data-Version'), rid: header(res, 'X-Request-Id'),
+    brk: header(res, 'X-Breaker'), deg: header(res, 'X-Degraded'),   // T4 only, else null
     err: res.error_code || 0,
   }));
 }

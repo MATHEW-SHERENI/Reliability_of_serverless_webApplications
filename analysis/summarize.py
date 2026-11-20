@@ -45,7 +45,9 @@ MIN_RUNS = 5               # repetitions per cell in the full experiment
 MAX_ATTEMPTS = 4           # as MAX_ATTEMPTS in api/reliability.py
 FAULT_RATE = CONDITIONS["C4"]["FAULT_RATE"]
 COLOURS = {"Base": "#2a78d6", "Retry": "#eb6834", "Cache": "#1baf7a",
-           "Retry+Cache": "#eda100"}
+           "Retry+Cache": "#eda100",                 # slots 5-8 for the T4 configurations
+           "Breaker": "#e87ba4", "Retry+Breaker": "#008300", "Cache+Breaker": "#6250d6",
+           "Retry+Cache+Breaker": "#e34948"}
 CONDITION_NAMES = {"C1": "C1 healthy", "C2": "C2 cold-start burst", "C3": "C3 load ramp",
                    "C4": "C4 10% transient faults", "C5": "C5 +300 ms delay",
                    "C6": "C6 +1.5 s delay", "C7": "C7 1-minute outage"}

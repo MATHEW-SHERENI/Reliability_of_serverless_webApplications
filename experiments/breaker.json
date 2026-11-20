@@ -1,0 +1,15 @@
+{
+  "name": "breaker",
+  "description": "Task T4 (H3): the four configurations with the circuit breaker in the sustained outage C7, 5 repetitions = 20 runs. Compared with the C7 runs of the full experiment (same seed, workload and outage), which used the same configurations without the breaker. One session, about 1 hour 30 minutes.",
+  "seed": 5360,
+  "configurations": [
+    "Breaker",
+    "Retry+Breaker",
+    "Cache+Breaker",
+    "Retry+Cache+Breaker"
+  ],
+  "conditions": [
+    "C7"
+  ],
+  "repetitions": 5
+}

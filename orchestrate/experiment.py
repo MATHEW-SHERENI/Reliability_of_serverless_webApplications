@@ -158,10 +158,10 @@ class AwsBackend:
         from orchestrate.price_updater import PriceUpdater
 
         out, condition = self.out, cell["condition"]
-        retry, cache = CONFIGURATIONS[cell["configuration"]]
+        retry, cache, breaker = CONFIGURATIONS[cell["configuration"]]
         warmup = 0 if condition == "C2" else WARMUP_S
         self.set_mechanisms(out["catalog_function_name"], retry, cache,
-                            region=self.region, run_id=run_id)
+                            region=self.region, run_id=run_id, breaker=breaker)
         run_start = time.time() + STARTUP_S + warmup       # when the measured phase begins
         faults = fault_settings(condition, run_id, run_start)
         self.set_faults(out["dependency_function_name"], region=self.region, **faults)
@@ -193,7 +193,8 @@ class AwsBackend:
         for name in ("versions.jsonl.gz", "lambda_logs.jsonl.gz"):
             self.s3.upload_file(str(local_dir / name), out["results_bucket"], prefix + name)
 
-        return {**result, "mechanisms": {"MECH_RETRY": retry, "MECH_CACHE": cache},
+        return {**result, "mechanisms": {"MECH_RETRY": retry, "MECH_CACHE": cache,
+                                         "MECH_BREAKER": breaker},
                 "faults": faults, "run_start": int(run_start), "k6_sent_ms": sent_ms,
                 "first_request_ms": first_ms, "measured_start_ms": main_ms,
                 "start_offset_s": start_offset_s(run_start, main_ms),

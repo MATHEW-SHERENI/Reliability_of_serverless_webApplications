@@ -4,10 +4,15 @@ Receives API Gateway HTTP API events for GET /products/{id} and POST /orders,
 validates input, calls the dependency, maps the outcome to an HTTP status, and
 adds the diagnostic headers that every measurement relies on.
 
-Two flags, read once when the environment starts, select the configuration:
-MECH_RETRY (deadline-aware retries for product reads) and MECH_CACHE (a
-per-environment 60 s cache for product reads). Both off is the Base
-configuration. Orders are never retried (until T5) and never cached.
+Flags, read once when the environment starts, select the configuration:
+MECH_RETRY (deadline-aware retries for product reads), MECH_CACHE (a
+per-environment 60 s cache for product reads), and MECH_BREAKER (task T4: a
+per-environment circuit breaker in front of the dependency). All off is the
+Base configuration. Orders are never retried (until T5) and never cached.
+
+While the breaker is open, no dependency call is made: a product read is served
+from the cache even if its entry has expired (X-Cache: STALE), or fails at once
+with 503; an order fails at once with 503. Both carry X-Degraded: true.
 """
 import base64
 import json
@@ -37,12 +42,14 @@ def parse_flag(name, env=os.environ):
 
 MECH_RETRY = parse_flag("MECH_RETRY")
 MECH_CACHE = parse_flag("MECH_CACHE")
+MECH_BREAKER = parse_flag("MECH_BREAKER")
 CONFIG_NAMES = {(False, False): "Base", (True, False): "Retry",
                 (False, True): "Cache", (True, True): "Retry+Cache"}
 
 _clock = reliability.Clock()
 _rng = random.Random()                    # jitter: unseeded, differs per environment
 _cache = reliability.TTLCache(_clock)     # lives as long as this environment
+_breaker = reliability.CircuitBreaker(_clock)   # so does the breaker's state
 
 _cold = True      # True only for the first request this environment serves
 _client = None    # created on first use, then reused while the environment is warm
@@ -96,10 +103,43 @@ class Outcome:
         self.cache = "OFF"
         self.data_version = None
         self.error_detail = None
+        self.degraded = False
+
+
+class BreakerOpen(Exception):
+    """The breaker is open and there is nothing to fall back on: answer 503 at once."""
 
 
 def config_name():
-    return CONFIG_NAMES[(MECH_RETRY, MECH_CACHE)]
+    name = CONFIG_NAMES[(MECH_RETRY, MECH_CACHE)]
+    if MECH_BREAKER:
+        name = "Breaker" if name == "Base" else name + "+Breaker"
+    return name
+
+
+def through_breaker(call):
+    """Run call() if the breaker allows it, and tell the breaker how it went.
+
+    Raises BreakerOpen without calling when the breaker is open. Only failures
+    of the dependency itself count (5xx, timeout, broken connection: the
+    retryable errors); a 404 or 409 is an answer, so it counts as a success.
+    """
+    if not MECH_BREAKER:
+        return call()
+    if not _breaker.allow():
+        raise BreakerOpen()
+    try:
+        result = call()
+    except DependencyClientError as err:
+        if err.status in (404, 409):
+            _breaker.record_success()           # the dependency answered
+        raise
+    except Exception as err:
+        if getattr(err, "retryable", False):
+            _breaker.record_failure()
+        raise
+    _breaker.record_success()
+    return result
 
 
 def fetch_product(product_id, outcome):
@@ -133,7 +173,17 @@ def get_product(raw_id, outcome):
             outcome.data_version = item.get("version")
             return
         outcome.cache = "MISS"
-    item = fetch_product(product_id, outcome)
+    try:
+        item = through_breaker(lambda: fetch_product(product_id, outcome))
+    except BreakerOpen:
+        stale = _cache.get_stale(product_id) if MECH_CACHE else None
+        outcome.degraded = True
+        if stale is None:
+            raise                                 # nothing to fall back on: 503
+        outcome.cache = "STALE"                   # expired entry, served on purpose
+        outcome.status, outcome.body = 200, stale
+        outcome.data_version = stale.get("version")
+        return
     if MECH_CACHE:
         _cache.put(product_id, item)      # only successful reads are stored
     outcome.status, outcome.body = 200, item
@@ -146,8 +196,14 @@ def create_order(body, outcome):
         outcome.status = 400
         outcome.body = {"error": "body needs integer product_id (1-1000) and quantity (1-10)"}
         return
-    outcome.attempts = 1
-    result = get_client().reserve(*order, timeout_s=ATTEMPT_TIMEOUT_S)
+    def reserve():
+        outcome.attempts = 1
+        return get_client().reserve(*order, timeout_s=ATTEMPT_TIMEOUT_S)
+    try:
+        result = through_breaker(reserve)
+    except BreakerOpen:
+        outcome.degraded = True                   # orders have no fallback: 503 at once
+        raise
     outcome.status, outcome.body = 200, result
 
 
@@ -174,6 +230,9 @@ def handler(event, context):
         outcome.status, outcome.body = 504, {"error": str(err)}
     except DependencyServerError as err:
         outcome.status, outcome.body = 503, {"error": str(err)}
+    except BreakerOpen:
+        outcome.status = 503
+        outcome.body = {"error": "dependency unavailable: circuit breaker open"}
     except Exception as err:   # a bug: count it as an error, keep details in the log
         outcome.status, outcome.body = 500, {"error": "internal error"}
         outcome.error_detail = repr(err)
@@ -190,6 +249,8 @@ def handler(event, context):
         "status": outcome.status,
         "attempts": outcome.attempts,
         "cache": outcome.cache,
+        "breaker": _breaker.state if MECH_BREAKER else "off",
+        "degraded": outcome.degraded,
         "latency_ms": round(latency_ms, 2),
         "error": outcome.error_detail,
     }))
@@ -204,5 +265,9 @@ def handler(event, context):
     }
     if outcome.data_version is not None:
         headers["X-Data-Version"] = str(outcome.data_version)
+    if MECH_BREAKER:
+        headers["X-Breaker"] = _breaker.state
+    if outcome.degraded:
+        headers["X-Degraded"] = "true"
     return {"statusCode": outcome.status, "headers": headers,
             "body": json.dumps(outcome.body)}

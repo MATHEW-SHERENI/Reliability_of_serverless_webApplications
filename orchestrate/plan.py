@@ -8,12 +8,17 @@ money is spent and reproduced afterwards.
 import json
 import random
 
-# Configuration name -> (MECH_RETRY, MECH_CACHE) flags of the Catalog.
+# Configuration name -> (MECH_RETRY, MECH_CACHE, MECH_BREAKER) flags of the Catalog.
+# The first four are the full experiment's; the breaker ones belong to task T4.
 CONFIGURATIONS = {
-    "Base": (False, False),
-    "Retry": (True, False),
-    "Cache": (False, True),
-    "Retry+Cache": (True, True),
+    "Base": (False, False, False),
+    "Retry": (True, False, False),
+    "Cache": (False, True, False),
+    "Retry+Cache": (True, True, False),
+    "Breaker": (False, False, True),
+    "Retry+Breaker": (True, False, True),
+    "Cache+Breaker": (False, True, True),
+    "Retry+Cache+Breaker": (True, True, True),
 }
 
 # Condition -> fault settings of the dependency (midterm Table 4). C2 and C3

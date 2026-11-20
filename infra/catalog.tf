@@ -56,6 +56,7 @@ resource "aws_lambda_function" "catalog" {
       ATTEMPT_TIMEOUT_MS = "1000"
       MECH_RETRY         = "false"
       MECH_CACHE         = "false"
+      MECH_BREAKER       = "false"
       RUN_ID             = "none"
     }
   }

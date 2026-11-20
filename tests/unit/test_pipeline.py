@@ -89,3 +89,17 @@ def test_one_failing_figure_does_not_stop_the_others(tmp_path, monkeypatch):
     assert pipeline.process_experiment(folder, say=lines.append) == 2
     assert (tmp_path / run_ids[1] / "figure.png").exists()
     assert any("failed" in line for line in lines) and "1 run figures" in lines[-1]
+
+
+def test_a_breaker_experiment_without_base_is_analysed(tmp_path):
+    # The Day 27 plan has only the four breaker configurations, so nothing to
+    # compare against Base inside it; every figure and table must still appear.
+    breaker = ("Breaker", "Retry+Breaker", "Cache+Breaker", "Retry+Cache+Breaker")
+    folder, run_ids = make_experiment(tmp_path, "breaker-1Z", "breaker", breaker)
+    lines = []
+    process(tmp_path, "breaker", say=lines.append)
+    for run_id in run_ids:
+        assert (tmp_path / run_id / "figure.png").exists()
+    for name in ("summary.csv", "comparison.png", "slo_matrix.png"):
+        assert (folder / name).exists(), name
+    assert any("4 runs" in line for line in lines)

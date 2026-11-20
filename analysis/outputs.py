@@ -31,7 +31,9 @@ from orchestrate.plan import CONDITIONS, CONFIGURATIONS
 
 AA_METRICS = ("error_rate", "p95_ms", "cost_per_1000_usd")     # the compared outcomes
 COLOURS = {"Base": "#2a78d6", "Retry": "#eb6834", "Cache": "#1baf7a",
-           "Retry+Cache": "#eda100"}
+           "Retry+Cache": "#eda100",                 # slots 5-8 for the T4 configurations
+           "Breaker": "#e87ba4", "Retry+Breaker": "#008300", "Cache+Breaker": "#6250d6",
+           "Retry+Cache+Breaker": "#e34948"}
 
 
 # ------------------------------------------------------------------ A/A noise floor

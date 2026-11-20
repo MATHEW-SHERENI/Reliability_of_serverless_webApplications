@@ -514,6 +514,51 @@ error rates (reads $p$ for Base and $p^4$ for Retry, orders $p$ everywhere),
 and writes a LaTeX table and a figure comparing the four configurations under
 each condition.
 
+\subsection{Circuit Breaker (T4)}
+The midterm schedule allowed the ambitious task only if the full grid finished
+by November 24. It finished earlier, with every run valid, so on November 20 I
+decided to go ahead with T4. The breaker follows the midterm specification
+(Section~3): it opens after five consecutive failures, stays open for 15\,s,
+and then lets one half-open probe through; a successful probe closes it, and a
+failed one opens it for another 15\,s. Like the cache, it lives at module
+scope, so each execution environment has its own breaker, which learns about
+an outage only from its own requests. This is the property behind the last
+part of H3, that the time to open grows with concurrency.
+
+The breaker sits between the cache and the retry policy, as in the midterm
+pipeline, so a fresh cache hit never reaches it. While it is open, no
+dependency call is made. A product read is answered from the cache even if its
+entry has expired, with \texttt{X-Cache: STALE} and status 200, and otherwise
+fails at once with 503. An order always fails at once with 503, because a
+reservation has no sensible fallback. Both responses carry
+\texttt{X-Degraded: true}, and with the breaker on, every response carries
+\texttt{X-Breaker} with the state after the request, which k6 records next to
+the status. To make the stale fallback possible, the cache now keeps expired
+entries: \texttt{get} still treats them as misses, so CT4 is unchanged, and a
+new method, \texttt{get\_stale}, used only by the fallback, returns an entry
+whatever its age.
+
+Two points that the midterm left open are fixed in the code and in the tests.
+First, a failure is a request that the dependency could not answer (a 5xx, a
+timeout, or a broken connection), counted once per request after any retries.
+With Retry+Breaker, one request with four failed attempts is one failure, not
+four; counting attempts would open the breaker after two requests and so
+measure the retry policy rather than the outage. Second, a 404 (unknown
+product) or a 409 (not enough stock) is a correct answer from a healthy
+dependency, so it counts as a success and resets the count.
+
+A third flag, \texttt{MECH\_BREAKER}, switches the breaker in the same way as
+the other two, which gives four more configurations: Breaker, Retry+Breaker,
+Cache+Breaker, and Retry+Cache+Breaker. The orchestrator now always writes all
+three flags, so a breaker run cannot leave the breaker on for the next run.
+The plan \texttt{experiments/breaker.json} runs these four configurations in
+C7 with five repetitions (20 runs, about 1\,h 30\,min), using the same seed,
+workload, and outage schedule as the full experiment. Its C7 runs of the four
+configurations without the breaker are the comparison. The metrics gained
+three counts: degraded responses, stale fallback reads, and how many of those
+were outdated under the staleness rule of Output~5. A 503 from an open breaker
+is counted as its own failure cause.
+
 % =====================================================================
 \section{Architecture as Built}
 \todo{Final architecture and internal design figures; note any differences
@@ -739,6 +784,35 @@ Cost $C$ & 20 gateway requests, 38 invocations, 1.555\,GB-s, 6.5 read and 8 writ
 
 \todo{CT4 handler checks (no dependency call on a hit, \texttt{POST} never
 cached), written by me.}
+
+\subsection{T4: Breaker State Transitions}
+The completion criterion of T4 is that the state transitions pass. The tests
+in \texttt{tests/unit/test\_breaker.py} drive the breaker with the same fake
+clock as CT3 and CT4, so the 15\,s cooldown takes no time. Four failures leave
+the breaker closed and the fifth opens it, while four failures, a success, and
+four more failures leave it closed (closed $\to$ open). It still refuses a call
+at 14.5\,s and allows exactly one at 15\,s (open $\to$ half-open), refuses a
+second call while the probe is out, closes after a successful probe
+(half-open $\to$ closed), and opens again for a full cooldown after a failed
+probe (half-open $\to$ open). A fifth test checks that an expired cache entry
+is still a miss for \texttt{get} but is returned by \texttt{get\_stale}.
+
+Eight further tests run the handler with a scripted dependency. An open breaker
+answers 503 with \texttt{X-Degraded} without a sixth dependency call; with the
+cache on, it serves an entry that is 61\,s old as \texttt{STALE} with status
+200; orders fail at once without a reservation call; a probe after 15\,s closes
+or reopens the breaker; 404 answers between failures keep it closed; with
+retries, one request counts once; and the configuration names are right, while
+Base responses carry no breaker headers. One more test checks the new metrics
+on four hand-built records. All 189 unit tests pass on Python 3.12 and 3.13.
+
+A mutation check made eight deliberate changes to the breaker, for example
+$>$ instead of $\geq$ at the threshold and at the cooldown, not resetting the
+count after a success, and not reopening after a failed probe. Seven were
+caught at once. The survivor, a 404 no longer counted as a success, showed
+that the 404 test could not tell the difference, because six 404 answers alone
+never open the breaker. The test now puts a 404 between two series of four
+failures, and all eight changes are caught.
 
 % =====================================================================
 \section{Results}
@@ -1191,8 +1265,8 @@ undefined in C6) and the share of cache hits that were stale.}
 \label{tab:output5}
 \end{table}
 
-\todo{T4 go/no-go; hypotheses H1--H3 marked supported, not supported, or
-inconclusive.}
+\todo{C7 with the breaker (five repetitions) against the C7 runs above (H3);
+hypotheses H1--H3 marked supported, not supported, or inconclusive.}
 
 % =====================================================================
 \section{Discussion}
@@ -1294,6 +1368,14 @@ Nov 18 & SLO windows are counted from the planned start of the measured phase
   its measured phase did not start exactly on plan, so outage failures spilled
   into the first minute. The fault schedule runs on the planned clock, and the
   windows now do too. \\
+Nov 20 & The cache keeps entries after their 60\,s lifetime; \texttt{get}
+  still treats them as misses, and only the breaker's fallback reads them. A
+  breaker failure is a request the dependency could not answer, counted once
+  after any retries; 404 and 409 count as successes. &
+  The midterm fallback is a stale cache entry, which cannot exist if an entry
+  is deleted when it expires. The midterm did not say what counts as one of the
+  five failures; counting attempts would let the retry policy, not the outage,
+  open the breaker. \\
 \bottomrule
 \end{tabularx}
 \caption{Changes from the midterm plan.}

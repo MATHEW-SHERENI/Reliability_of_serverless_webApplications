@@ -17,8 +17,8 @@ work progresses, in `report/final_report.tex`.
 |------|--------|
 | T1 Testbed: Catalog API, dependency with fault injector, Terraform | Done, tag `v0.1-testbed` (CT1, CT2, CT5 pass) |
 | T2 Reliability mechanisms: retries and in-function cache | Done except two CT4 handler tests (CT3, CT4 unit tests pass; flags switch configurations live) |
-| T3 Measurement pipeline and evaluation (140 runs) | In progress: k6 workload (M5), EC2 load host, results bucket, orchestrator (M6, CT7), metrics (M7, CT6) done; pilot next |
-| T4 Circuit breaker (ambitious) | Planned |
+| T3 Measurement pipeline and evaluation (140 runs) | Done: 5 sessions, 145 runs (140 + 5 A/A controls), all valid at the first attempt; outputs 1-5 and the A/A noise floor from `make analyze` |
+| T4 Circuit breaker (ambitious) | Code and state-transition tests done (`tests/unit/test_breaker.py`: closed -> open -> half-open -> closed, half-open -> open); C7 with the breaker, 5 repetitions: `experiments/breaker.json` |
 | T5 Request deduplication (if time permits) | Planned |
 
 ## Architecture
@@ -74,13 +74,14 @@ The virtual environment does not need to be activated: the Makefile calls
 | `make deploy` | Create or update all AWS resources |
 | `make destroy` | Delete all AWS resources |
 | `make seed` | Write the 1,000-product catalog (seed 5360) |
-| `make test` | Unit tests (174), no AWS access |
+| `make test` | Unit tests (189), no AWS access |
 | `make test-integration` | Integration tests that need the deployed stack (CT1) |
 | `make ct5` | Fault injector calibration, about 4 minutes (CT5) |
 | `make smoke-load` | 25-second, 10% k6 run from this computer (checks script and API) |
 | `make data-init`, `make data-deploy` | Create the versioned results bucket once (separate stack, never destroyed by `make destroy`) |
 | `make ec2-run` | One full C1 run of the deployed configuration from the EC2 load host |
 | `make experiment PLAN=experiments/<plan>.json` | Run every run of a plan through the orchestrator (M6); default `experiments/smoke.json` |
+| `make experiment PLAN=experiments/breaker.json` | Task T4: the four breaker configurations in C7, 5 repetitions (20 runs, about 1 h 30 min); needs `make deploy` after the breaker code change |
 | `make experiment PLAN=experiments/full.json SESSION=1` | Run one session (one repetition, 29 runs including the A/A control, about 2 hours) of the full experiment |
 | `make plan-check PLAN=experiments/<plan>.json [SESSION=n]` | Print the run order and estimated duration without touching AWS |
 | `make analyze` | Every table and figure of the full experiment from its raw files: outputs 1-5 (verdict matrix, RQ1 table, C7 time series, C3 figure, cost table), the A/A noise floor, and the judged effects (`effects.csv`) in `results/full-summary/`. `make analyze-quick` reuses each run's metrics and takes seconds |
@@ -94,6 +95,7 @@ The virtual environment does not need to be activated: the Makefile calls
 | Test | Type | What it shows |
 |------|------|---------------|
 | Unit tests (`tests/unit/`) | pytest, offline | Seeder, fault logic, dependency client, Catalog handler (including CT2, invalid input), fault switching |
+| T4 breaker (`tests/unit/test_breaker.py`) | pytest, offline | With a fake clock: 5 failures in a row open the breaker, a success resets the count, 15 s cooldown, one half-open probe that closes or reopens it; open breaker answers 503 with `X-Degraded` or an expired cache entry (`X-Cache: STALE`) without calling the dependency; 404 counts as an answer; one retried request counts once |
 | CT6 (`tests/unit/test_ct6_metrics.py`) | pytest, offline | A hand-built run of 20 requests with one outage: p50/p95/p99, error rate, recovery time and cost equal the values computed by hand |
 | CT1 (`tests/integration/test_ct1_workflow.py`) | pytest, marked `integration` | A product read and an order through the deployed API; stock drops by exactly 2 |
 | CT5 (`tests/integration/ct5_fault_calibration.py`) | script | 10% faults give 9-11% failures; +300 ms delay adds 270-330 ms to median dependency latency; outage failures only inside the window |

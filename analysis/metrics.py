@@ -138,6 +138,8 @@ def failure_kind(record, catalog_ids):
         return "throttled"
     if status < 500:
         return None
+    if record.get("deg") == "true":
+        return "breaker"             # the open breaker answered at once (task T4)
     if record.get("rid") not in catalog_ids:
         return "platform"            # our code never answered: API Gateway or Lambda failed
     return "dependency" if status in (502, 503, 504) else "catalog"
@@ -226,12 +228,13 @@ def recovery_time_s(records, fault_end_ms):
     return None
 
 
-def stale_reads(records, versions):
-    """(stale, hits): cache hits whose data version is older than the newest one at send time."""
+def stale_reads(records, versions, label="HIT"):
+    """(stale, served): responses from the cache (X-Cache = label: HIT, or STALE for the
+    breaker's fallback) whose data version is older than the newest one at send time."""
     history = {}
     for change in sorted(versions, key=lambda v: v["t"]):
         history.setdefault(change["product_id"], []).append((change["t"], change["version"]))
-    hits = [r for r in records if r.get("cache") == "HIT"]
+    hits = [r for r in records if r.get("cache") == label]
     stale = 0
     for r in hits:
         changes = history.get(r["id"], [])
@@ -296,6 +299,7 @@ def run_metrics(records, log_lines, versions, fault_end_ms=None, origin_ms=None)
     cached = [r for r in measured if r.get("cache") in ("HIT", "MISS")]
     hits = sum(r["cache"] == "HIT" for r in cached)
     stale, _ = stale_reads(measured, versions)
+    fallback_stale, fallbacks = stale_reads(measured, versions, "STALE")
 
     orders = sum(1 for r in measured if r["op"] == "post" and r["st"] in ORDER_REACHED_DB)
     reads = max(0, len(dep_reports) - orders - injected)
@@ -329,6 +333,8 @@ def run_metrics(records, log_lines, versions, fault_end_ms=None, origin_ms=None)
         "attempts_unknown": overall["requests"] - len(known),
         "cache_hits": hits, "hit_ratio": hits / len(cached) if cached else None,
         "stale_reads": stale, "stale_rate": stale / hits if hits else None,
+        "fallback_reads": fallbacks, "fallback_outdated": fallback_stale,
+        "degraded": sum(r.get("deg") == "true" for r in measured),
         "cold_starts": sum(r.get("cold") == "true" for r in measured),
         "dependency_cold_starts": sum(x["init_ms"] is not None for x in dep_reports),
         "slo_windows": len(windows),
@@ -336,7 +342,7 @@ def run_metrics(records, log_lines, versions, fault_end_ms=None, origin_ms=None)
         "slo_compliant_share": sum(w["meets_slo"] for w in windows) / len(windows),
         "recovery_s": recovery_time_s(measured, fault_end_ms) if fault_end_ms else None,
         **{f"fail_{k}": kinds.count(k) for k in
-           ("timeout", "throttled", "dependency", "catalog", "platform")},
+           ("timeout", "throttled", "dependency", "catalog", "platform", "breaker")},
         "joined_share": (sum(r["rid"] in catalog_ids for r in with_rid) / len(with_rid)
                          if with_rid else None),
         "gateway_requests": len(measured),
