@@ -9,6 +9,8 @@ For each run, in the plan's seeded, interleaved order:
   4. judge the run: invalid if a file is missing, k6 dropped an iteration, or
      the load host's CPU went above 70%; an invalid run is queued again;
   5. write the run's manifest (commit, settings, times, result) to S3.
+At the end, the metrics, a figure per run, the experiment's summary, and the
+combined summary of all experiments of the same plan are produced (analysis/pipeline.py).
 After the last run the deployed stack is put back to Base and a healthy
 dependency, even if a run failed with an error.
 
@@ -272,6 +274,10 @@ def main():
     kept = valid_runs(manifests)
     print(f"done: {len(kept)} of {len(runs)} planned runs valid, "
           f"{len(manifests)} attempts; manifest in results/{experiment_id}/experiment.json")
+    # Figures and tables straight away: metrics, one figure per run, the session's
+    # summary, and the combined summary of every experiment of this plan so far.
+    from analysis.pipeline import after_experiment
+    after_experiment(experiment_id, plan["name"])
     return 0 if len(kept) == len(runs) else 1
 
 

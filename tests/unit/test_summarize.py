@@ -191,3 +191,10 @@ def test_runs_without_window_counts_give_no_share():
     cells = summarise([{"run_id": "x", "condition": "C1", "configuration": "Base",
                         "error_rate": 0.0}])
     assert cell(cells, "C1", "Base")["slo_share_pooled"] is None
+
+
+def test_undefined_values_get_no_verdict():
+    from analysis.summarize import compare
+    cell_ = {"runs": 5, "cost_per_1000_usd_min": None, "cost_per_1000_usd_max": None}
+    base = {"runs": 5, "cost_per_1000_usd_min": 0.002, "cost_per_1000_usd_max": 0.003}
+    assert compare(cell_, base, "cost_per_1000_usd") == "n/a"     # C6: nothing succeeded

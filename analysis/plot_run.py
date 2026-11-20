@@ -227,18 +227,29 @@ def panel_cost(ax, row):
                        row["catalog_invocations"] + row["dependency_invocations"],
                        row["gb_seconds"], row["read_units"], row["write_units"])
     total = sum(parts.values())
-    per_1000 = {name: 1000 * dollars / row["successes"] for name, dollars in parts.items()}
-    names = sorted(per_1000, key=per_1000.get)                    # largest at the top
-    values = [per_1000[n] for n in names]
+    if row["successes"]:
+        shown = {name: 1000 * dollars / row["successes"] for name, dollars in parts.items()}
+        unit = "US dollars per 1,000 successful requests"
+        title = f"(f) Cost: ${row['cost_per_1000_usd']:.5f} per 1,000 successful requests"
+    else:
+        # Nothing succeeded (C6): a cost per success does not exist, so show what the
+        # run itself cost; the money was spent all the same.
+        shown = dict(parts)
+        unit = "US dollars for the whole measured phase"
+        title = (f"(f) Cost: ${total:.5f} for the run; no successful requests, "
+                 "so no cost per success")
+    names = sorted(shown, key=shown.get)                          # largest at the top
+    values = [shown[n] for n in names]
     ax.barh(names, values, height=0.55, color=SUCCESS)
-    ax.set_xlim(0, max(values) * 1.6)
+    ax.set_xlim(0, (max(values) or 1e-6) * 1.6)
     for name, v in zip(names, values):
-        ax.annotate(f"${v:.5f}  ({parts[name] / total:.0%})", xy=(v, name), xytext=(4, 0),
+        share = f"{parts[name] / total:.0%}" if total else "n/a"
+        ax.annotate(f"${v:.5f}  ({share})", xy=(v, name), xytext=(4, 0),
                     textcoords="offset points", va="center", fontsize=8)
     ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"${v:.4f}"))
     ax.grid(axis="y", visible=False)
-    ax.set_xlabel("US dollars per 1,000 successful requests")
-    ax.set_title(f"(f) Cost: ${row['cost_per_1000_usd']:.5f} per 1,000 successful requests")
+    ax.set_xlabel(unit)
+    ax.set_title(title)
 
 
 def plot_run(run_dir):

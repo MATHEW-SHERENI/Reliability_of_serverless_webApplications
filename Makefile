@@ -9,7 +9,7 @@ PY := .venv/bin/python
 AWS_PROFILE ?= B10
 export AWS_PROFILE
 
-.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run experiment metrics plot summary plan-check
+.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run experiment metrics plot summary plan-check results
 
 init:
 	$(TF) init
@@ -86,3 +86,9 @@ plot:
 #   make summary EXP="results/full-s1-* results/full-s2-*" OUT=results/full-summary
 summary:
 	$(PY) analysis/summarize.py $(EXP) $(if $(OUT),--out $(OUT))
+
+# Every figure and table of every experiment of a plan, plus the plan's combined
+# summary, without AWS (the orchestrator does this itself after each experiment), e.g.
+#   make results PLAN=full
+results:
+	$(PY) analysis/pipeline.py $(if $(PLAN),$(notdir $(basename $(PLAN))),--all)

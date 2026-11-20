@@ -74,7 +74,7 @@ The virtual environment does not need to be activated: the Makefile calls
 | `make deploy` | Create or update all AWS resources |
 | `make destroy` | Delete all AWS resources |
 | `make seed` | Write the 1,000-product catalog (seed 5360) |
-| `make test` | Unit tests (157), no AWS access |
+| `make test` | Unit tests (165), no AWS access |
 | `make test-integration` | Integration tests that need the deployed stack (CT1) |
 | `make ct5` | Fault injector calibration, about 4 minutes (CT5) |
 | `make smoke-load` | 25-second, 10% k6 run from this computer (checks script and API) |
@@ -83,6 +83,7 @@ The virtual environment does not need to be activated: the Makefile calls
 | `make experiment PLAN=experiments/<plan>.json` | Run every run of a plan through the orchestrator (M6); default `experiments/smoke.json` |
 | `make experiment PLAN=experiments/full.json SESSION=1` | Run one session (one repetition, 29 runs including the A/A control, about 2 hours) of the full experiment |
 | `make plan-check PLAN=experiments/<plan>.json [SESSION=n]` | Print the run order and estimated duration without touching AWS |
+| `make results PLAN=full` | Every figure and table of every experiment of a plan (metrics, one figure per run, each experiment's summary) and the plan's combined summary in `results/<plan>-summary/`, without AWS. The orchestrator does this automatically at the end of each experiment |
 | `make metrics RUN=results/<folder>` | Metrics (M7) of one run, or of every valid run of an experiment; writes `metrics.csv` (and `windows.csv`, `buckets.csv` per run) |
 | `make plot RUN=results/<run_id>` | One figure with every metric of a run (`figure.png`, `figure.pdf`): latency and throughput over time, SLO per minute, failures by cause, all metrics, and cost by part |
 | `make summary EXP=results/<experiment_id>` | Median and range of every metric per cell (`summary.csv`), a LaTeX table (`summary.tex`), and a figure comparing the four configurations per condition (`comparison.png`, `comparison.pdf`), and the SLO verdict matrix, output 1 (`slo_matrix.tex`, `slo_matrix.png`, `slo_matrix.pdf`). Several experiments: `EXP="results/full-s1-* results/full-s2-*" OUT=results/full-summary` |

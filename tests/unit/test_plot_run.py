@@ -39,3 +39,23 @@ def test_plot_run_writes_png_and_pdf(tmp_path):
     png, pdf = plot_run(run)
     assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n" and png.stat().st_size > 50_000
     assert pdf.read_bytes()[:5] == b"%PDF-"
+
+
+def test_a_run_without_successes_still_gets_its_figure(tmp_path):
+    # C6: every dependency call times out, so every request fails (504).
+    records, logs = fixture()
+    for r in records:
+        r["st"] = 504
+    run = tmp_path / "exp-001-C6-Base-r1-a1"
+    run.mkdir()
+    write_gz(run / "records.jsonl.gz", records)
+    write_gz(run / "lambda_logs.jsonl.gz", logs)
+    write_gz(run / "versions.jsonl.gz", [])
+    (run / "manifest.json").write_text(json.dumps({
+        "run_id": run.name, "configuration": "Base", "condition": "C6", "repetition": 1,
+        "attempt": 1, "valid": True, "faults": {"FAULT_MODE": "delay", "FAULT_DELAY_MS": 1500},
+        "run_start": T0 // 1000}))
+    row = analyse_run(run)
+    assert row["successes"] == 0 and row["cost_per_1000_usd"] is None
+    png, _ = plot_run(run)
+    assert png.stat().st_size > 50_000

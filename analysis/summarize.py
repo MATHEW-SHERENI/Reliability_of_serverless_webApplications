@@ -71,7 +71,7 @@ def compare(cell, base, metric):
     mine = (cell[f"{metric}_min"], cell[f"{metric}_max"])
     theirs = (base[f"{metric}_min"], base[f"{metric}_max"])
     if None in mine or None in theirs:
-        return "too few runs"
+        return "n/a"            # undefined, e.g. cost per success when nothing succeeded
     if ranges_overlap(mine, theirs):
         return "inconclusive"
     return "lower" if mine[1] < theirs[0] else "higher"
