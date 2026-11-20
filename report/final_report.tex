@@ -832,30 +832,30 @@ at 3.2\,s, close to the 3\,s deadline. In C7, Retry+Cache sent 10{,}409 calls to
 the failed dependency against 3{,}000 for Base. Session~1 of the full
 experiment followed the same day: 29 of 29 runs were valid at the first
 attempt, in 2\,h 5\,min against an estimate of 2\,h 7\,min, and session~2 on the
-same evening and session~3 on November 19 were again 29 of 29 each. With two runs per cell, the C7 outage already
-separates the configurations: the cache alone failed 20\% of requests, Base 33\%,
-Retry 33\%, and Retry+Cache 31\%. Combining retries with the cache gave back most
-of the cache's protection, plausibly because requests that keep retrying for up
-to 3\,s hold their execution environments, so Lambda starts new ones whose caches
-are empty; the five repetitions will show whether the ranges separate.
+same evening, session~3 on November 19, and sessions 4 and 5 on the evening of
+November 19 were again 29 of 29 each. The full experiment, 140 runs and five A/A
+control runs, was thus complete on November 19, three days ahead of plan, with
+every run valid at its first attempt; including the pilot and the shakedown,
+163 runs were made and none was invalid.
 
 \subsection{SLO Verdict Matrix}
 Table~\ref{tab:slo-matrix} is output~1 of the midterm design: for every
 configuration and condition, the share of 1-minute windows that met the SLO
-(p95 at most 500\,ms and at most 1\% errors), pooled over the runs of the cell,
-here the first three sessions. It answers B10's question of when the API
-violates its target. In C1, C3 (up to 2{,}000 requests per second), and C5
-(+300\,ms) every window complied in every configuration. In C2 every window
-failed, because the first requests wait about 1.4\,s while 100 execution
-environments start, which neither mechanism shortens; in C6 every window failed,
-because every dependency call timed out. In C7 exactly the outage minute failed
-in all four configurations, six of nine minutes complying, although the cache
-alone lowered the error rate from 33\% to 20\%: still twenty times the 1\%
-limit. Only C4 separated the configurations, with Retry compliant in 44\% of
-minutes and Retry+Cache in 22\%, against none for Base and Cache; both retry
-configurations sit at the floor of about 1\% set by orders, which are never
-retried, so each minute's verdict is close to a coin flip and the difference
-between them is not an effect. The binary SLO therefore hides most of what the
+(p95 at most 500\,ms and at most 1\% errors), pooled over the five runs of the
+cell. It answers B10's question of when the API violates its target. In C1, C3
+(up to 2{,}000 requests per second), and C5 (+300\,ms) every window complied in
+every configuration. In C2 every window failed, because the first requests wait
+about 1.4\,s while 100 execution environments start, which neither mechanism
+shortens; in C6 every window failed, because every dependency call timed out. In
+C7 exactly the outage minute failed in all four configurations, 10 of 15 minutes
+complying, although the cache alone lowered the error rate from 33\% to 20\%:
+still twenty times the 1\% limit. Only C4 separated the configurations, with
+both retry configurations compliant in 40\% of minutes against none for Base
+and Cache. Both sit at the floor of about 1\% set by orders, which are never
+retried, so each minute's verdict is close to a coin flip: after three sessions
+Retry and Retry+Cache stood at 44\% and 22\%, after five at 40\% each, and even
+the difference from Base is inconclusive by the range rule, because some retry
+runs failed every minute. The binary SLO therefore hides most of what the
 mechanisms do: they change how far the API misses its target far more often
 than whether it misses it.
 
@@ -866,20 +866,111 @@ than whether it misses it.
 \toprule
 \textbf{Configuration} & \textbf{C1} & \textbf{C2} & \textbf{C3} & \textbf{C4} & \textbf{C5} & \textbf{C6} & \textbf{C7} \\
 \midrule
-Base & 100 (9/9) & 0 (0/3) & 100 (15/15) & 0 (0/9) & 100 (9/9) & 0 (0/9) & 67 (6/9) \\
-Retry & 100 (9/9) & 0 (0/3) & 100 (15/15) & 44 (4/9) & 100 (9/9) & 0 (0/9) & 67 (6/9) \\
-Cache & 100 (9/9) & 0 (0/3) & 100 (15/15) & 0 (0/9) & 100 (9/9) & 0 (0/9) & 67 (6/9) \\
-Retry+Cache & 100 (9/9) & 0 (0/3) & 100 (15/15) & 22 (2/9) & 100 (9/9) & 0 (0/9) & 67 (6/9) \\
+Base & 100 (15/15) & 0 (0/5) & 100 (25/25) & 0 (0/15) & 100 (15/15) & 0 (0/15) & 67 (10/15) \\
+Retry & 100 (15/15) & 0 (0/5) & 100 (25/25) & 40 (6/15) & 100 (15/15) & 0 (0/15) & 67 (10/15) \\
+Cache & 100 (15/15) & 0 (0/5) & 100 (25/25) & 0 (0/15) & 100 (15/15) & 0 (0/15) & 67 (10/15) \\
+Retry+Cache & 100 (15/15) & 0 (0/5) & 100 (25/25) & 40 (6/15) & 100 (15/15) & 0 (0/15) & 67 (10/15) \\
 \bottomrule
 \end{tabular}
-\caption{SLO verdict matrix, sessions 1--3: share of compliant 1-minute windows
-in percent (compliant/all windows, pooled over three runs per cell; C2 has one
-window per run). To be updated with all five sessions.}
+\caption{SLO verdict matrix: share of compliant 1-minute windows in percent
+(compliant/all windows, pooled over five runs per cell; C2 has one window per
+run).}
 \label{tab:slo-matrix}
 \end{table}
 
-\todo{Full experiment: final verdict matrix; latency and error tables; outage
-time series; cache and concurrency figure; cost table.}
+\subsection{Effects of the Mechanisms}
+Table~\ref{tab:effects} gives the median and range of the five runs of every
+cell. A difference from Base counts as an effect only where the two ranges do
+not overlap (midterm Section~4.6).
+
+\begin{table}[p]
+\centering
+\footnotesize
+\begin{tabular}{@{}llrrrrr@{}}
+\toprule
+\textbf{Cond.} & \textbf{Configuration} & \textbf{Errors (\%)} & \textbf{p95 (ms)} &
+  \textbf{\$/1{,}000 ($10^{-3}$)} & \textbf{$H$ (\%)} & \textbf{Stale (\%)} \\
+\midrule
+C1 & Base        & 0.00 (0.00--0.00)  & 49.9 (43.3--52.0)   & 1.85 (1.85--1.86) & --    & --   \\
+C1 & Retry       & 0.00 (0.00--0.00)  & 47.3 (44.6--49.4)   & 1.85 (1.84--1.87) & --    & --   \\
+C1 & Cache       & 0.00 (0.00--0.00)  & 45.3 (42.1--47.4)   & 1.60 (1.60--1.60) & 70.3  & 2.1  \\
+C1 & Retry+Cache & 0.00 (0.00--0.00)  & 45.8 (41.3--46.0)   & 1.60 (1.60--1.60) & 70.4  & 2.1  \\
+\midrule
+C2 & Base        & 0.25 (0.00--1.50)  & 1386 (1369--1462)   & 2.34 (2.32--2.42) & --    & --   \\
+C2 & Retry       & 0.00 (0.00--0.00)  & 1391 (1344--1491)   & 2.33 (2.32--2.42) & --    & --   \\
+C2 & Cache       & 0.12 (0.00--1.37)  & 1365 (1344--1455)   & 2.14 (2.13--2.22) & 50.5  & 0.3  \\
+C2 & Retry+Cache & 0.00 (0.00--0.00)  & 1416 (1356--1445)   & 2.17 (2.14--2.21) & 50.0  & 0.7  \\
+\midrule
+C3 & Base        & 0.00 (0.00--0.00)  & 54.1 (50.1--55.4)   & 1.89 (1.88--1.89) & --    & --   \\
+C3 & Retry       & 0.00 (0.00--0.00)  & 52.4 (49.9--57.2)   & 1.88 (1.87--1.89) & --    & --   \\
+C3 & Cache       & 0.00 (0.00--0.00)  & 48.1 (46.1--52.0)   & 1.60 (1.59--1.62) & 75.2  & 1.9  \\
+C3 & Retry+Cache & 0.00 (0.00--0.00)  & 48.9 (45.3--52.2)   & 1.60 (1.59--1.60) & 75.6  & 1.7  \\
+\midrule
+C4 & Base        & 9.98 (9.65--10.37) & 46.6 (44.5--52.2)   & 2.02 (2.01--2.03) & --    & --   \\
+C4 & Retry       & 1.03 (0.87--1.13)  & 145.3 (139.4--159.6) & 1.92 (1.92--1.94) & --   & --   \\
+C4 & Cache       & 3.74 (3.38--3.99)  & 45.3 (41.2--47.3)   & 1.64 (1.62--1.65) & 68.9  & 3.6  \\
+C4 & Retry+Cache & 1.08 (0.91--1.14)  & 50.0 (45.6--52.5)   & 1.62 (1.62--1.63) & 67.3  & 3.7  \\
+\midrule
+C5 & Base        & 0.00 (0.00--0.00)  & 347.2 (344.1--350.2) & 4.34 (4.33--4.34) & --   & --   \\
+C5 & Retry       & 0.00 (0.00--0.00)  & 347.1 (344.2--348.6) & 4.33 (4.32--4.34) & --   & --   \\
+C5 & Cache       & 0.00 (0.00--0.00)  & 346.0 (342.7--347.6) & 3.05 (3.04--3.07) & 49.7 & 4.7  \\
+C5 & Retry+Cache & 0.00 (0.00--0.00)  & 347.3 (342.8--348.2) & 3.07 (3.06--3.07) & 49.2 & 2.7  \\
+\midrule
+C6 & Base        & 100 (100--100)     & 1134 (1132--1141)   & --                & --    & --   \\
+C6 & Retry       & 100 (100--100)     & 3157 (3155--3164)   & --                & --    & --   \\
+C6 & Cache       & 100 (100--100)     & 1139 (1135--1140)   & --                & 0.0   & --   \\
+C6 & Retry+Cache & 100 (100--100)     & 3160 (3157--3165)   & --                & 0.0   & --   \\
+\midrule
+C7 & Base        & 33.33 (33.32--33.33) & 47.1 (42.0--50.5) & 2.60 (2.58--2.61) & --    & --   \\
+C7 & Retry       & 32.95 (32.86--33.02) & 1055 (1039--1065) & 4.28 (4.26--4.29) & --    & --   \\
+C7 & Cache       & 20.12 (19.62--20.91) & 43.6 (41.5--46.8) & 1.92 (1.91--1.94) & 59.3  & 3.4  \\
+C7 & Retry+Cache & 31.10 (30.87--31.35) & 1049 (1036--1050) & 3.84 (3.80--3.88) & 46.6  & 1.5  \\
+\bottomrule
+\end{tabular}
+\caption{Median (range) of five runs per cell. Cost per 1{,}000 successful
+requests in thousandths of a US dollar (undefined in C6, where no request
+succeeded); $H$: cache hit ratio; Stale: share of cache hits that returned an
+outdated price.}
+\label{tab:effects}
+\end{table}
+
+\paragraph{Retries.} Under transient faults (C4) retries lowered the error rate
+from 9.98\% to 1.03\%, with no overlap of the ranges; reads failed at 0.02\%,
+close to the $0.1^4 = 0.01\%$ predicted, while orders, never retried, still
+failed at about 10\%. The price was a p95 three times higher (145\,ms against
+47\,ms), through the backoff waits. The cost per successful request fell
+(1.92 against 2.02 thousandths of a dollar), because the rescued requests
+outweighed the extra calls. Where the dependency stays slow or down, retries
+only cost: in C6 p95 rose from 1.1\,s to 3.2\,s with every request still
+failing, and in C7 cost rose by 65\% and p95 from 47\,ms to over 1\,s, for an
+error rate lower by 0.4 percentage points. That last difference passes the range
+rule, because the five C7 runs are almost identical, but it is far too small to
+matter. In C2 the retry configurations had no errors against a median of 0.25\%
+for Base, but Base's range reaches zero, so the effect is inconclusive.
+
+\paragraph{The cache.} The cache lowered the cost per successful request in
+every condition where requests succeed, with no overlap of the ranges: by
+13\% to 15\% under normal load (C1, C3) and by 30\% with a slow dependency
+(C5), where each hit also saves the waiting that Lambda bills. Its effect on
+p95 was never confirmed, because the slowest 5\% of requests are cache misses
+and orders. It lowered the error rate under transient faults (C4: 3.74\%
+against 9.98\%) and in the outage (C7: 20.1\% against 33.3\%). Between 2\% and
+5\% of cache hits returned an outdated price.
+
+\paragraph{The combination.} Retry+Cache kept the cache's cost advantage and
+the retries' error reduction under transient faults, but in the outage it lost
+most of the cache's protection: 31.1\% errors (30.9--31.4) against 20.1\%
+(19.6--20.9) for the cache alone, ranges far apart. Its cache hit ratio during
+C7 was 47\% against 59\%. This supports the explanation proposed after the
+shakedown: requests that keep retrying for up to 3\,s hold their execution
+environments, so Lambda starts new ones, and each new environment begins with an
+empty cache. The two mechanisms do not simply add up; under a sustained outage,
+adding retries to a cache makes the API less reliable, slower, and more
+expensive.
+
+\todo{A/A noise floor; outage time series (output 3); C3 figure of hit ratio,
+p95, cold starts and concurrency against arrival rate (output 4); hypotheses
+H1--H3 marked supported, not supported, or inconclusive.}
 
 % =====================================================================
 \section{Discussion}
@@ -1098,6 +1189,10 @@ Nov 18 & SLO windows are counted from the planned start of the measured phase
   \item Valid is not the same as right: all ten shakedown runs were valid, yet
   one C7 run passed one minute fewer than its outage allowed, which revealed
   windows that did not line up with the fault schedule.
+  \item Real data finds the edge cases synthetic data misses: C6, where no
+  request succeeds, broke two outputs that every test had passed, the summary's
+  printed table and the run figure's cost panel, both dividing by the number of
+  successes.
 \end{itemize}
 
 % =====================================================================
@@ -1190,6 +1285,10 @@ Nov 18 & SLO windows are counted from the planned start of the measured phase
   heatmap, with tests) and interpreted it. A folder pattern Claude gave me
   matched the run folders as well as the session folders, so the first summary
   covered one session only; with a corrected pattern it covered all three.
+  In the evening I ran sessions 4 and 5. Claude wrote the automatic analysis
+  that now follows every experiment (metrics, a figure per run, and the
+  summaries), fixed the run figure for runs without any successful request, and
+  interpreted the final results.
 \end{itemize}
 
 % =====================================================================
