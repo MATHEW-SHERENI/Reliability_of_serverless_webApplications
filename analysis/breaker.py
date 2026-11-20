@@ -246,7 +246,7 @@ def degraded_tex(rows):
 def plot_h3_series(series, paths):
     """Two rows (error rate, p99) by four pairs; the outage shaded."""
     style()
-    fig, axes = plt.subplots(2, len(PAIRS), figsize=(13, 6.5), sharex=True, sharey="row",
+    fig, axes = plt.subplots(2, len(PAIRS), figsize=(10, 5.5), sharex=True, sharey="row",
                              layout="constrained")
     every = [p[2] for points in series.values() for p in points] or [100]
     for k, (without_name, with_name) in enumerate(PAIRS):
@@ -264,11 +264,13 @@ def plot_h3_series(series, paths):
             bottom.plot(x, [p[2] for p in points], dash, color=COLOURS[name], linewidth=1.6)
         top.set_title(f"{without_name} / {with_name}", fontsize=9, loc="left", color=INK)
         top.set_ylim(0, 105)
-        if top.get_lines():
-            top.legend(fontsize=8, frameon=False, loc="upper right")
         latency_axis(bottom, every)
         bottom.set_ylabel("")                    # one label per row, on the left panel
-        bottom.set_xlabel("Seconds from the planned start")
+        bottom.set_xlabel("Seconds from start")
+    # One legend for the line styles; each panel's title names its two configurations.
+    styles = [plt.Line2D([], [], color=INK, linestyle=dash, linewidth=1.6, label=label)
+              for dash, label in (("--", "without breaker"), ("-", "with breaker"))]
+    fig.legend(handles=styles, loc="outside upper center", ncol=2, frameon=False)
     axes[0][0].set_ylabel("Error rate (%)")
     axes[1][0].set_ylabel("p99 latency (ms)")
     for path in paths:
