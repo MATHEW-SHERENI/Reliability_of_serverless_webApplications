@@ -9,7 +9,7 @@ PY := .venv/bin/python
 AWS_PROFILE ?= B10
 export AWS_PROFILE
 
-.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run experiment metrics plot summary plan-check results analyze analyze-quick
+.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run experiment metrics plot summary plan-check results analyze analyze-quick h3
 
 init:
 	$(TF) init
@@ -100,3 +100,8 @@ analyze:
 
 analyze-quick:
 	$(PY) analysis/pipeline.py full --quick
+
+# Task T4 (H3): the breaker experiment against the C7 runs of the full experiment;
+# tables and figures in results/h3/, no AWS needed.
+h3:
+	$(PY) analysis/breaker.py
