@@ -9,6 +9,11 @@ Written next to the summary (analysis/summarize.py calls write_outputs):
   aa.csv, aa.tex     the A/A comparison: in each session, the regular Base C1 run
                      against the control run of the same cell, and the noise floor
   effects.csv        every comparison with Base, judged by both rules below
+  output4_c3.png     output 4 (RQ2, H2): p95, hit ratio, cold starts, environments,
+  output4_c3.pdf     concurrency and achieved rate per C3 step against arrival rate
+  output4_c3.tex     the same medians as a table
+  output5_cost.tex   output 5 (RQ3): cost per 1,000 successful requests per
+                     configuration and condition, change against Base, stale rate
 
 Rules (midterm Sections 4.6 and 5.2):
   - range rule: a configuration differs from Base only if their ranges of five runs
@@ -191,6 +196,130 @@ def plot_output3(series, paths, runs_per_config=None):
     plt.close(fig)
 
 
+# ------------------------------------------------------------------ output 4
+
+STEP_METRICS = (("p95_ms", "p95 latency (ms)"), ("hit_ratio", "Cache hit ratio (%)"),
+                ("cold_starts", "Cold starts per step"),
+                ("environments", "Execution environments seen"),
+                ("concurrency", "Concurrent executions (estimate)"),
+                ("requests", "Achieved rate (requests/s)"))
+
+
+def c3_steps_by_config(rows, experiment_dirs):
+    """{configuration: [per-step medians over its C3 runs]} from each run's steps.csv."""
+    folders = {Path(d).name: Path(d) for d in experiment_dirs}
+    per_config = {}
+    for r in rows:
+        if r["condition"] != "C3" or r.get("control"):
+            continue
+        parent = folders.get(r.get("experiment"), Path(experiment_dirs[0])).parent
+        path = parent / r["run_id"] / "steps.csv"
+        if path.exists():
+            per_config.setdefault(r["configuration"], []).append(read_csv(path))
+    out = {}
+    for configuration, runs in per_config.items():
+        steps = []
+        for k in sorted({s["step"] for run in runs for s in run}):
+            here = [s for run in runs for s in run if s["step"] == k]
+            step = {"step": k, "target_rate": here[0]["target_rate"], "runs": len(here)}
+            for metric, _ in STEP_METRICS + (("error_rate", ""),):
+                values = [s[metric] for s in here if s.get(metric) is not None]
+                step[metric] = statistics.median(values) if values else None
+            steps.append(step)
+        out[configuration] = steps
+    return out
+
+
+def plot_output4(steps, paths):
+    """Six panels against arrival rate (log scale), one line per configuration."""
+    style()
+    fig, axes = plt.subplots(2, 3, figsize=(12, 7), layout="constrained")
+    rates = sorted({s["target_rate"] for v in steps.values() for s in v})
+    for ax, (metric, label) in zip(axes.flat, STEP_METRICS):
+        for configuration in CONFIGURATIONS:
+            points = [s for s in steps.get(configuration, []) if s.get(metric) is not None]
+            if not points:
+                continue
+            scale = 100 if metric == "hit_ratio" else 1 / 60 if metric == "requests" else 1
+            ax.plot([s["target_rate"] for s in points], [s[metric] * scale for s in points],
+                    color=COLOURS[configuration], linewidth=1.8, marker="o", markersize=4,
+                    label=configuration)
+        ax.set_xscale("log")
+        ax.set_xticks(rates, [f"{r:,}" for r in rates])
+        ax.minorticks_off()
+        ax.set_title(label, fontsize=9, loc="left")
+        ax.set_xlabel("Arrival rate (requests/s)")
+        if metric != "p95_ms":
+            ax.set_ylim(bottom=0)
+    handles, labels = axes.flat[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="outside upper center", ncol=4, frameon=False)
+    for path in paths:
+        fig.savefig(path, dpi=200)
+    plt.close(fig)
+
+
+def output4_tex(steps):
+    lines = [r"\begin{tabular}{@{}lrrrrrr@{}}", r"\toprule",
+             r"\textbf{Configuration} & \textbf{Rate} & \textbf{p95 (ms)} & $H$ (\%) & "
+             r"\textbf{Cold starts} & \textbf{Environments} & \textbf{Concurrency} \\",
+             r"\midrule"]
+    first = True
+    for configuration in CONFIGURATIONS:
+        if configuration not in steps:
+            continue
+        if not first:
+            lines.append(r"\midrule")
+        first = False
+        for s in steps[configuration]:
+            lines.append(" & ".join([configuration, f"{s['target_rate']:,}", num(s["p95_ms"]),
+                                     pct(s["hit_ratio"], 1), num(s["cold_starts"], 0),
+                                     num(s["environments"], 0), num(s["concurrency"], 1)])
+                         + r" \\")
+    lines += [r"\bottomrule", r"\end{tabular}", ""]
+    return "\n".join(lines)
+
+
+# ------------------------------------------------------------------ output 5
+
+def output5_tex(cells):
+    """Cost per 1,000 successful requests (thousandths of a dollar) and change against
+    Base, per configuration and condition; then the stale rate of the cache rows."""
+    grid = {(c["configuration"], c["condition"]): c for c in cells}
+    conditions = [k for k in CONDITIONS if any(c["condition"] == k for c in cells)]
+    lines = [r"\begin{tabular}{@{}l" + "r" * len(conditions) + r"@{}}", r"\toprule",
+             r"\textbf{Configuration} & " + " & ".join(rf"\textbf{{{k}}}" for k in conditions)
+             + r" \\", r"\midrule",
+             rf"\multicolumn{{{len(conditions) + 1}}}{{@{{}}l}}{{\emph{{Cost per 1{{,}}000 "
+             r"successful requests (thousandths of a US dollar; change against Base)}} \\"]
+    for configuration in CONFIGURATIONS:
+        cells_ = [grid.get((configuration, k)) for k in conditions]
+        if not any(cells_):
+            continue
+        texts = []
+        for k, cell in zip(conditions, cells_):
+            value = None if cell is None else cell["cost_per_1000_usd_median"]
+            base = grid.get(("Base", k))
+            base_value = None if base is None else base["cost_per_1000_usd_median"]
+            if value is None:
+                texts.append("--")
+            elif configuration == "Base" or not base_value:
+                texts.append(f"{value * 1000:.2f}")
+            else:
+                texts.append(f"{value * 1000:.2f} ({(value / base_value - 1) * 100:+.0f}\\%)")
+        lines.append(configuration + " & " + " & ".join(texts) + r" \\")
+    lines += [r"\midrule",
+              rf"\multicolumn{{{len(conditions) + 1}}}{{@{{}}l}}{{\emph{{Stale responses "
+              r"(\% of cache hits)}} \\"]
+    for configuration in CONFIGURATIONS:
+        if "Cache" not in configuration:
+            continue
+        lines.append(configuration + " & " + " & ".join(
+            pct((grid.get((configuration, k)) or {}).get("stale_rate_median"), 1)
+            for k in conditions) + r" \\")
+    lines += [r"\bottomrule", r"\end{tabular}", ""]
+    return "\n".join(lines)
+
+
 # ------------------------------------------------------------------ all together
 
 def write_outputs(rows, experiment_dirs, cells, out_dir):
@@ -212,10 +341,16 @@ def write_outputs(rows, experiment_dirs, cells, out_dir):
             writer.writerow([experiment] + [x for m in AA_METRICS for x in (a[m], b[m])])
         writer.writerow(["noise_floor"] + [x for m in AA_METRICS for x in (floor[m], "")])
     (out_dir / "aa.tex").write_text(aa_tex(pairs, floor))
+    steps = c3_steps_by_config(rows, list(experiment_dirs))
+    if steps:
+        plot_output4(steps, [out_dir / "output4_c3.png", out_dir / "output4_c3.pdf"])
+        (out_dir / "output4_c3.tex").write_text(output4_tex(steps))
+    (out_dir / "output5_cost.tex").write_text(output5_tex(cells))
     effects = judge_effects(cells, floor)
     if effects:
         with open(out_dir / "effects.csv", "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=list(effects[0]))
             writer.writeheader()
             writer.writerows(effects)
-    return {"pairs": len(pairs), "floor": floor, "effects": effects, "c7": bool(series)}
+    return {"pairs": len(pairs), "floor": floor, "effects": effects, "c7": bool(series),
+            "c3": bool(steps)}

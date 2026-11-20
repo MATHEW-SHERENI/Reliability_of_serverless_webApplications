@@ -10,6 +10,8 @@ Outputs, next to them:
   metrics.csv   one row with every metric of midterm Section 4.4
   windows.csv   one row per 1-minute SLO window
   buckets.csv   one row per 5-second bucket (error rate and p99 over time, for C7)
+  steps.csv     C3 only: one row per load step (hit ratio, p95, cold starts,
+                environments and concurrency against arrival rate, for output 4)
 
 Definitions (midterm Section 4.4):
   - Only the measured phase counts; warm-up requests are left out.
@@ -355,6 +357,42 @@ def fault_end_ms(faults):
     return (int(faults["RUN_START"]) + int(faults["FAULT_OUTAGE_END_S"])) * 1000
 
 
+RAMP_RATES = (100, 250, 500, 1000, 2000)    # C3 arrival rates per step, as load/workload.js
+STEP_S = 60                                  # seconds per C3 step
+
+
+def c3_steps(records, origin_ms):
+    """Per C3 load step (output 4): target rate, requests, p95, hit ratio, cold starts,
+    distinct execution environments, and estimated concurrent executions.
+
+    Steps are counted from origin_ms, the planned start of the measured phase; a
+    request a little outside the five steps joins the nearest one. Concurrency is
+    estimated by Little's law, arrival rate times mean time in the system (the
+    client-side latency, which adds only the short network legs).
+    """
+    measured = [r for r in records if r["ph"] != "warmup"]
+    groups = {}
+    for r in measured:
+        k = min(len(RAMP_RATES) - 1, max(0, (r["t"] - origin_ms) // (STEP_S * 1000)))
+        groups.setdefault(k, []).append(r)
+    rows = []
+    for k, rate in enumerate(RAMP_RATES):
+        group = groups.get(k, [])
+        cached = [r for r in group if r.get("cache") in ("HIT", "MISS")]
+        hits = sum(r["cache"] == "HIT" for r in cached)
+        mean_s = sum(r["lat"] for r in group) / len(group) / 1000 if group else None
+        rows.append({
+            "step": k + 1, "target_rate": rate, "requests": len(group),
+            "p95_ms": percentile([r["lat"] for r in group], 95),
+            "error_rate": (sum(is_failure(r) for r in group) / len(group)) if group else None,
+            "hit_ratio": hits / len(cached) if cached else None,
+            "cold_starts": sum(r.get("cold") == "true" for r in group),
+            "environments": len({r["env"] for r in group if r.get("env")}),
+            "concurrency": len(group) / STEP_S * mean_s if group else None,
+        })
+    return rows
+
+
 IDENTITY = ("run_id", "experiment", "configuration", "condition", "repetition", "control",
             "attempt", "valid")
 
@@ -369,7 +407,8 @@ def analyse_run(run_dir):
         raise FileNotFoundError(f"{run_dir}: missing {', '.join(missing)}")
     faults = manifest.get("faults") or {}
     origin = int(manifest["run_start"]) * 1000 if manifest.get("run_start") else None
-    row, windows, buckets = run_metrics(read_jsonl(run_dir / "records.jsonl.gz"),
+    records = read_jsonl(run_dir / "records.jsonl.gz")
+    row, windows, buckets = run_metrics(records,
                                         read_jsonl(run_dir / "lambda_logs.jsonl.gz"),
                                         read_jsonl(run_dir / "versions.jsonl.gz"),
                                         fault_end_ms(faults), origin)
@@ -377,6 +416,10 @@ def analyse_run(run_dir):
     write_csv(run_dir / "metrics.csv", [row])
     write_csv(run_dir / "windows.csv", windows)
     write_csv(run_dir / "buckets.csv", buckets)
+    if manifest.get("condition") == "C3":
+        start = origin if origin is not None else min(r["t"] for r in records
+                                                      if r["ph"] != "warmup")
+        write_csv(run_dir / "steps.csv", c3_steps(records, start))
     return row
 
 

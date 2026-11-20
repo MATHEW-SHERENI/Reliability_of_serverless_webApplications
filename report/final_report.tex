@@ -1082,9 +1082,117 @@ median of five runs per configuration.}
 \label{fig:output3}
 \end{figure}
 
-\todo{C3 figure of hit ratio, p95, cold starts and concurrency against arrival
-rate (output 4); cost table (output 5); hypotheses H1--H3 marked supported, not
-supported, or inconclusive.}
+\subsection{Scaling under a Load Ramp (Output 4)}
+Figure~\ref{fig:output4} and Table~\ref{tab:output4} follow the five one-minute
+steps of C3, from 100 to 2{,}000 requests per second, as medians of five runs.
+Twenty times the load raised Base's p95 by only 5\,ms (49.8 to 54.9\,ms), while
+the estimated concurrency grew in proportion to the load, from 3.7 to 80
+executions, far below the reserved 400, and no request was throttled. The cache
+reduced concurrency by about 40\% (50 executions at 2{,}000 requests per second),
+because a hit finishes without waiting for the dependency.
+
+H2 predicted that the hit ratio would fall as the arrival rate and concurrency
+rise. In C3 it did not: it stayed between 73\% and 76\% at every step. The
+number of execution environments serving requests grew roughly in step with the
+load, so each environment kept seeing about the same number of requests within
+its 60\,s TTL. The hit ratio depends on the requests each environment receives,
+not on the arrival rate itself, and the other conditions agree: a burst of 100
+simultaneous requests (C2) starts 100 empty caches and the hit ratio was 50\%,
+and a slower dependency (C5) keeps environments busy for longer, spreading the
+same traffic over more of them, with the same 50\%.
+
+No step showed a cold start. A check of the raw records explains why: after the
+configuration change that starts every run, the 30\,s warm-up at 100 requests
+per second created 147 environments, because each request waited about a second
+for a new environment and the requests piled up. The measured ramp then used at
+most 88 environments, all of them already warm. C3 therefore measures how warm
+environments scale; the cold starts of a ramp would need a run without warm-up,
+as C2 does for a burst. The warm-up itself was the largest cold-start storm of
+the run.
+
+\begin{figure}[h]
+\centering
+\IfFileExists{figures/output4_c3.pdf}{%
+\includegraphics[width=\linewidth]{figures/output4_c3.pdf}}{%
+\fbox{\parbox{0.9\linewidth}{\centering figures/output4\_c3.pdf missing: copy it
+from results/full-summary/}}}
+\caption{Output 4: C3 steps against arrival rate (log scale), median of five runs
+per configuration.}
+\label{fig:output4}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\footnotesize
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+\textbf{Configuration} & \textbf{Rate} & \textbf{p95 (ms)} & $H$ (\%) & \textbf{Cold starts} & \textbf{Environments} & \textbf{Concurrency} \\
+\midrule
+Base & 100 & 49.8 & -- & 0 & 8 & 3.7 \\
+Base & 250 & 51.3 & -- & 0 & 14 & 9.5 \\
+Base & 500 & 52.0 & -- & 0 & 30 & 19.3 \\
+Base & 1,000 & 53.8 & -- & 0 & 65 & 39.4 \\
+Base & 2,000 & 54.9 & -- & 0 & 88 & 80.0 \\
+\midrule
+Retry & 100 & 47.7 & -- & 0 & 8 & 3.7 \\
+Retry & 250 & 48.9 & -- & 0 & 18 & 9.4 \\
+Retry & 500 & 51.7 & -- & 0 & 36 & 19.2 \\
+Retry & 1,000 & 52.8 & -- & 0 & 71 & 39.5 \\
+Retry & 2,000 & 53.0 & -- & 0 & 89 & 77.8 \\
+\midrule
+Cache & 100 & 45.3 & 73.6 & 0 & 5 & 2.3 \\
+Cache & 250 & 45.6 & 73.8 & 0 & 9 & 5.8 \\
+Cache & 500 & 46.1 & 75.0 & 0 & 17 & 11.6 \\
+Cache & 1,000 & 47.3 & 75.8 & 0 & 38 & 23.5 \\
+Cache & 2,000 & 49.5 & 74.9 & 0 & 123 & 50.1 \\
+\midrule
+Retry+Cache & 100 & 45.4 & 73.5 & 0 & 5 & 2.3 \\
+Retry+Cache & 250 & 46.1 & 73.3 & 0 & 10 & 5.8 \\
+Retry+Cache & 500 & 46.7 & 75.4 & 0 & 18 & 11.7 \\
+Retry+Cache & 1,000 & 48.4 & 75.8 & 0 & 38 & 23.8 \\
+Retry+Cache & 2,000 & 50.1 & 76.1 & 0 & 63 & 48.6 \\
+\bottomrule
+\end{tabular}
+\caption{Output 4: medians per C3 step (environments: distinct execution
+environments that served requests in the step; concurrency: arrival rate times
+mean latency).}
+\label{tab:output4}
+\end{table}
+
+\subsection{Cost and Staleness (Output 5)}
+Table~\ref{tab:output5} answers RQ3. The cache was the mechanism that saved
+money: 8\% to 30\% less per successful request in every condition where requests
+succeeded, most with a slow dependency, where each hit also saves the waiting
+that Lambda bills. Its price was staleness: between 0.3\% and 4.7\% of cache
+hits returned a price that had already changed. Retries cost nothing extra when
+nothing fails, saved 5\% per successful request under transient faults, and cost
+64\% more in the outage; with the cache, 48\% more.
+
+\begin{table}[h]
+\centering
+\footnotesize
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+\textbf{Configuration} & \textbf{C1} & \textbf{C2} & \textbf{C3} & \textbf{C4} & \textbf{C5} & \textbf{C6} & \textbf{C7} \\
+\midrule
+\multicolumn{8}{@{}l}{\emph{Cost per 1{,}000 successful requests (thousandths of a US dollar; change against Base)}} \\
+Base & 1.85 & 2.34 & 1.89 & 2.02 & 4.34 & -- & 2.60 \\
+Retry & 1.85 (-0\%) & 2.33 (-0\%) & 1.88 (-0\%) & 1.92 (-5\%) & 4.33 (-0\%) & -- & 4.28 (+64\%) \\
+Cache & 1.60 (-14\%) & 2.14 (-9\%) & 1.60 (-15\%) & 1.64 (-19\%) & 3.05 (-30\%) & -- & 1.92 (-26\%) \\
+Retry+Cache & 1.60 (-14\%) & 2.17 (-8\%) & 1.60 (-15\%) & 1.62 (-20\%) & 3.07 (-29\%) & -- & 3.84 (+48\%) \\
+\midrule
+\multicolumn{8}{@{}l}{\emph{Stale responses (\% of cache hits)}} \\
+Cache & 2.1 & 0.3 & 1.9 & 3.6 & 4.7 & -- & 3.4 \\
+Retry+Cache & 2.1 & 0.7 & 1.7 & 3.7 & 2.7 & -- & 1.5 \\
+\bottomrule
+\end{tabular}
+\caption{Output 5: cost per 1{,}000 successful requests (median of five runs;
+undefined in C6) and the share of cache hits that were stale.}
+\label{tab:output5}
+\end{table}
+
+\todo{T4 go/no-go; hypotheses H1--H3 marked supported, not supported, or
+inconclusive.}
 
 % =====================================================================
 \section{Discussion}
@@ -1408,6 +1516,10 @@ Nov 18 & SLO windows are counted from the planned start of the measured phase
   tests; the tests caught one of Claude's own mistakes, an edge bucket reached
   by only one run of two being treated as a median. I ran the analysis on the
   five sessions and checked the outage figure.
+  \item Nov 20: Claude wrote outputs 4 and 5, with tests and a check that every
+  generated table compiles. The C3 cold-start count of zero looked wrong to
+  Claude; a check of the raw records that I ran showed it was right, because the
+  warm-up had already created more environments than the ramp needed.
 \end{itemize}
 
 % =====================================================================

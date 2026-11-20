@@ -131,3 +131,90 @@ def test_write_outputs_makes_every_file(tmp_path):
         (tmp_path / "aa.tex").read_text()
     effects = list(csv.DictReader(open(tmp_path / "effects.csv")))
     assert {(e["metric"], e["final"]) for e in effects} >= {("cost_per_1000_usd", "lower")}
+
+
+# ------------------------------------------------- outputs 4 and 5 (Day 25)
+
+from analysis.metrics import c3_steps  # noqa: E402
+from analysis.outputs import c3_steps_by_config, output4_tex, output5_tex, plot_output4  # noqa: E402
+
+
+def rec(t, lat, cache, env, cold="false", st=200, ph="main"):
+    return {"t": t, "lat": lat, "cache": cache, "env": env, "cold": cold, "st": st, "ph": ph}
+
+
+def test_c3_steps_by_hand():
+    records = [rec(-10_000, 999, "HIT", "w", ph="warmup"),        # warm-up: left out
+               rec(-500, 20, "HIT", "e1"),                         # just early: step 1
+               rec(1_000, 10, "HIT", "e1", cold="true"),
+               rec(30_000, 30, "MISS", "e2"),
+               rec(59_000, 40, "MISS", "e2", st=503),
+               rec(60_000, 100, "HIT", "e3"),
+               rec(119_999, 200, "HIT", "e3"),
+               rec(300_500, 50, "OFF", "e4")]                      # just late: step 5
+    steps = c3_steps(records, 0)
+    assert [s["target_rate"] for s in steps] == [100, 250, 500, 1000, 2000]
+    one, two, three, _, five = steps
+    # Step 1: latencies 20 10 30 40 -> p95 = 4th of 4 = 40; hits 2 of 4 cached reads;
+    # one cold start; environments e1, e2; one failure of 4;
+    # concurrency = 4 requests / 60 s x mean 25 ms = 0.0016667.
+    assert (one["requests"], one["p95_ms"], one["hit_ratio"], one["cold_starts"],
+            one["environments"], one["error_rate"]) == (4, 40, 0.5, 1, 2, 0.25)
+    assert one["concurrency"] == pytest.approx(4 / 60 * 0.025)
+    # Step 2: 2 requests, p95 = 200, both hits, one environment; 2/60 x 0.150 s.
+    assert (two["requests"], two["p95_ms"], two["hit_ratio"], two["environments"]) == \
+        (2, 200, 1.0, 1)
+    assert two["concurrency"] == pytest.approx(2 / 60 * 0.150)
+    assert (three["requests"], three["p95_ms"], three["hit_ratio"], three["concurrency"]) == \
+        (0, None, None, None)
+    assert (five["requests"], five["hit_ratio"], five["environments"]) == (1, None, 1)
+
+
+def write_steps(folder, values):
+    folder.mkdir(parents=True)
+    with open(folder / "steps.csv", "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["step", "target_rate", "requests", "p95_ms",
+                                               "error_rate", "hit_ratio", "cold_starts",
+                                               "environments", "concurrency"])
+        writer.writeheader()
+        for k, (p95, hit, envs) in enumerate(values):
+            writer.writerow({"step": k + 1, "target_rate": [100, 250][k], "requests": 6000,
+                             "p95_ms": p95, "error_rate": 0, "hit_ratio": hit,
+                             "cold_starts": 0, "environments": envs, "concurrency": 2.5})
+
+
+def test_output4_medians_over_runs_and_files(tmp_path):
+    exp = tmp_path / "full-s1-1Z"
+    exp.mkdir()
+    rows = [run("full-s1-1Z", "Cache", "C3"), run("full-s1-1Z", "Cache", "C3"),
+            run("full-s1-1Z", "Cache", "C3")]
+    for k, r in enumerate(rows):
+        r["run_id"] += f"-{k}"
+    write_steps(tmp_path / rows[0]["run_id"], [(50, 0.70, 3), (52, 0.74, 8)])
+    write_steps(tmp_path / rows[1]["run_id"], [(48, 0.72, 4), (55, 0.76, 9)])
+    write_steps(tmp_path / rows[2]["run_id"], [(60, 0.71, 3), (51, 0.75, 7)])
+    steps = c3_steps_by_config(rows, [exp])
+    # Medians of three runs: p95 (50, 48, 60) -> 50; hit (0.70, 0.72, 0.71) -> 0.71;
+    # environments (3, 4, 3) -> 3; step 2: p95 (52, 55, 51) -> 52, environments 8.
+    first, second = steps["Cache"]
+    assert (first["p95_ms"], first["hit_ratio"], first["environments"], first["runs"]) == \
+        (50, 0.71, 3, 3)
+    assert (second["target_rate"], second["p95_ms"], second["environments"]) == (250, 52, 8)
+    tex = output4_tex(steps)
+    assert "Cache & 100 & 50.0 & 71.0 & 0 & 3 & 2.5 \\\\" in tex
+    plot_output4(steps, [tmp_path / "o4.png"])
+    assert (tmp_path / "o4.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_output5_cost_change_against_base_and_stale_rate():
+    def c(condition, configuration, cost, stale=None):
+        return {"condition": condition, "configuration": configuration,
+                "cost_per_1000_usd_median": cost, "stale_rate_median": stale}
+    cells = [c("C1", "Base", 0.00185), c("C1", "Cache", 0.00160, 0.021),
+             c("C6", "Base", None), c("C6", "Cache", None, None)]
+    tex = output5_tex(cells)
+    # 0.00160 / 0.00185 - 1 = -13.5 % -> "-14%"; C6 has no successful request: "--".
+    assert "Base & 1.85 & -- \\\\" in tex
+    assert "Cache & 1.60 (-14\\%) & -- \\\\" in tex
+    assert "Cache & 2.1 & -- \\\\" in tex                    # stale share of cache hits
+    assert tex.count(r"\multicolumn{3}{@{}l}{\emph{") == 2    # the two row-group headings

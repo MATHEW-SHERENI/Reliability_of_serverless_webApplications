@@ -322,3 +322,21 @@ def test_slo_windows_follow_the_fault_schedule_not_the_first_request(offset_ms):
     assert [w["meets_slo"] for w in windows] == [True, False, True]
     assert (row["slo_windows"], row["slo_compliant_windows"]) == (3, 2)
     assert sum(w["requests"] for w in windows) == 180          # none lost at the edges
+
+
+def test_c3_runs_get_a_steps_file(tmp_path):
+    records, logs = fixture()
+    run = tmp_path / "exp-001-C3-Base-r1-a1"
+    run.mkdir()
+    write_gz(run / "records.jsonl.gz", records)
+    write_gz(run / "lambda_logs.jsonl.gz", logs)
+    write_gz(run / "versions.jsonl.gz", [])
+    (run / "manifest.json").write_text(json.dumps({
+        "run_id": run.name, "configuration": "Base", "condition": "C3", "repetition": 1,
+        "attempt": 1, "valid": True, "faults": {}, "run_start": T0 // 1000}))
+    analyse_run(run)
+    lines = (run / "steps.csv").read_text().splitlines()
+    assert len(lines) == 6 and lines[0].startswith("step,target_rate,requests")
+    # The 20 measured requests sit at 0-95 s: 12 in step 1 (0-55 s), 8 in step 2 (60-95 s).
+    assert lines[1].split(",")[:3] == ["1", "100", "12"]
+    assert lines[2].split(",")[:3] == ["2", "250", "8"]
