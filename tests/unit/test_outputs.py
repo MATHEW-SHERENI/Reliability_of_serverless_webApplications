@@ -218,3 +218,13 @@ def test_output5_cost_change_against_base_and_stale_rate():
     assert "Cache & 1.60 (-14\\%) & -- \\\\" in tex
     assert "Cache & 2.1 & -- \\\\" in tex                    # stale share of cache hits
     assert tex.count(r"\multicolumn{3}{@{}l}{\emph{") == 2    # the two row-group headings
+
+
+def test_output5_has_no_rows_for_configurations_not_run():
+    # Found by make check-report: the stale rows listed every cache configuration,
+    # including the breaker ones that the full experiment never ran, as "--" rows.
+    cells = [{"condition": "C1", "configuration": name, "cost_per_1000_usd_median": 0.0016,
+              "stale_rate_median": 0.021} for name in ("Base", "Cache")]
+    tex = output5_tex(cells)
+    assert "Breaker" not in tex and "Retry+Cache" not in tex
+    assert tex.count("Cache & ") == 2                         # one cost row, one stale row

@@ -313,7 +313,9 @@ def output5_tex(cells):
               rf"\multicolumn{{{len(conditions) + 1}}}{{@{{}}l}}{{\emph{{Stale responses "
               r"(\% of cache hits)}} \\"]
     for configuration in CONFIGURATIONS:
-        if "Cache" not in configuration:
+        # only cache configurations this experiment ran (the breaker ones run apart)
+        if "Cache" not in configuration or not any(grid.get((configuration, k))
+                                                   for k in conditions):
             continue
         lines.append(configuration + " & " + " & ".join(
             pct((grid.get((configuration, k)) or {}).get("stale_rate_median"), 1)

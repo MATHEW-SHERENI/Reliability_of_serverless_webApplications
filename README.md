@@ -74,7 +74,7 @@ The virtual environment does not need to be activated: the Makefile calls
 | `make deploy` | Create or update all AWS resources |
 | `make destroy` | Delete all AWS resources |
 | `make seed` | Write the 1,000-product catalog (seed 5360) |
-| `make test` | Unit tests (195), no AWS access |
+| `make test` | Unit tests (204), no AWS access |
 | `make test-integration` | Integration tests that need the deployed stack (CT1) |
 | `make ct5` | Fault injector calibration, about 4 minutes (CT5) |
 | `make smoke-load` | 25-second, 10% k6 run from this computer (checks script and API) |
@@ -86,6 +86,7 @@ The virtual environment does not need to be activated: the Makefile calls
 | `make plan-check PLAN=experiments/<plan>.json [SESSION=n]` | Print the run order and estimated duration without touching AWS |
 | `make analyze` | Every table and figure of the full experiment from its raw files: outputs 1-5 (verdict matrix, RQ1 table, C7 time series, C3 figure, cost table), the A/A noise floor, and the judged effects (`effects.csv`) in `results/full-summary/`. `make analyze-quick` reuses each run's metrics and takes seconds |
 | `make h3` | Task T4 (H3): each breaker configuration against its partner without the breaker in C7 (range rule and noise floor), how fast each environment's breaker opened and closed, and reads served by the stale fallback; `h3.tex`, `degraded.tex`, `h3_c7.png`, `h3_opening.png` in `results/h3/` |
+| `make check-report` | Every table of the report against the regenerated results: rows the analysis writes as LaTeX must appear in `report/final_report.tex`, and the effects and read-p95 tables must show the regenerated values rounded as printed; fails on any difference. Run after `make analyze`, `make results PLAN=experiments/breaker.json` and `make h3` |
 | `make results PLAN=full` | Every figure and table of every experiment of a plan (metrics, one figure per run, each experiment's summary) and the plan's combined summary in `results/<plan>-summary/`, without AWS. The orchestrator does this automatically at the end of each experiment |
 | `make metrics RUN=results/<folder>` | Metrics (M7) of one run, or of every valid run of an experiment; writes `metrics.csv` (and `windows.csv`, `buckets.csv` per run) |
 | `make plot RUN=results/<run_id>` | One figure with every metric of a run (`figure.png`, `figure.pdf`): latency and throughput over time, SLO per minute, failures by cause, all metrics, and cost by part |

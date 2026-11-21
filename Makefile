@@ -9,7 +9,12 @@ PY := .venv/bin/python
 AWS_PROFILE ?= B10
 export AWS_PROFILE
 
-.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run experiment metrics plot summary plan-check results analyze analyze-quick h3
+# A fixed creation date for every figure, so regenerating a PDF from the same data
+# gives the same bytes and git shows only figures whose content really changed
+# (1796083200 is 2026-12-01 00:00 UTC).
+export SOURCE_DATE_EPOCH := 1796083200
+
+.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run experiment metrics plot summary plan-check results analyze analyze-quick h3 check-report
 
 init:
 	$(TF) init
@@ -105,3 +110,8 @@ analyze-quick:
 # tables and figures in results/h3/, no AWS needed.
 h3:
 	$(PY) analysis/breaker.py
+
+# Day 29: every table of the report against the regenerated results; fails on any
+# difference. Run after make analyze, make results PLAN=experiments/breaker.json, make h3.
+check-report:
+	$(PY) analysis/check_report.py
