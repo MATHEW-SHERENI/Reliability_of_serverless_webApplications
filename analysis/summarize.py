@@ -37,6 +37,7 @@ from analysis.plot_run import INK, MUTED, latency_axis, plt, read_csv, style  # 
 from orchestrate.plan import CONDITIONS, CONFIGURATIONS  # noqa: E402
 
 METRICS = ("error_rate", "read_error_rate", "order_error_rate", "p50_ms", "p95_ms", "p99_ms",
+           "read_p95_ms",
            "throughput_rps", "mean_attempts", "hit_ratio", "stale_rate", "cold_starts",
            "slo_compliant_share", "recovery_s", "cost_per_1000_usd")
 COMPARED = ("error_rate", "p95_ms", "cost_per_1000_usd",    # the outcomes of RQ1 to RQ3

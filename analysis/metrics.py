@@ -327,6 +327,8 @@ def run_metrics(records, log_lines, versions, fault_end_ms=None, origin_ms=None)
         "order_requests": len(orders_sent), "order_failed": order_failed,
         "order_error_rate": order_failed / len(orders_sent) if orders_sent else None,
         "p50_ms": overall["p50_ms"], "p95_ms": overall["p95_ms"], "p99_ms": overall["p99_ms"],
+        # H2 is about read latency; orders never touch the cache and can set the overall p95.
+        "read_p95_ms": percentile([r["lat"] for r in reads], 95),
         "duration_s": duration,
         "throughput_rps": successes / duration if duration else None,
         "mean_attempts": sum(known) / len(known) if known else None,

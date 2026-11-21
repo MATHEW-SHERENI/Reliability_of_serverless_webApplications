@@ -1404,12 +1404,227 @@ environments serving the outage, one point per run.}
 \label{fig:opening}
 \end{figure}
 
-\todo{Hypotheses H1 and H2 marked supported, not supported, or inconclusive.}
+\subsection{Hypotheses H1 and H2}\label{sec:h12}
+\paragraph{H1 (retries).} H1 predicted that under 10\% independent transient
+faults (C4) retries would lower the error rate from about 10\% to below 1\%,
+matching the analytical prediction, at about 1.11 dependency calls per request.
+For the requests that retries cover, this held closely: reads failed at
+0.02\% against the predicted $0.1^4 = 0.01\%$, and the dependency was called
+1.10 times per request against $1 + 0.1 + 0.01 + 0.001 \approx 1.11$ for a read
+and 1 for an order. The overall error rate, however, fell to 1.03\%
+(0.87--1.13\%), not below 1\%. Orders are never retried, and with orders at
+10\% of the requests the expected rate for the whole mix is
+$0.1 \times 0.1 + 0.9 \times 0.1^4 \approx 1.01\%$, which the measurement
+matches; the threshold in H1 was set without this floor. The second half of H1
+held as stated. With a sustained slowdown beyond the timeout (C6), retries kept
+every request failing while raising p99 from 1.2\,s to 3.2\,s, at the 3\,s
+deadline, with 2.80 dependency calls per request and about three times the
+time billed per request. In the outage (C7) they raised p99 to 1.2\,s rather
+than towards 3\,s, because a stopped dependency fails at once and only the
+backoff waits remain, and they raised the cost per successful request by 65\%.
+Neither condition gained a single compliant SLO minute. H1 is therefore
+supported, with one correction: the error rate falls to the floor set by
+requests that are not retried, here 1\%, not below it.
+
+\paragraph{H2 (cache).} H2 predicted that the cache reduces p95 read latency,
+billed duration, and dependency calls, and that its hit ratio and benefit
+decline as arrival rate and concurrency rise. The reductions held, though not
+equally. Dependency calls fell to between 0.38 and 0.55 per request
+wherever the dependency answered (Table~\ref{tab:output2}), and the cost per
+successful request, which includes the billed duration of both functions, fell
+by 8\% to 30\%, beyond the noise floor in every condition where requests
+succeeded. The effect on read latency was small. Because the overall p95 also
+contains orders, which never touch the cache, the analysis was extended on
+November 20 to report the p95 of reads alone (Table~\ref{tab:readp95}). The
+cache lowered the median read p95 in six of the seven conditions, but by only a
+few milliseconds, and the difference passed the range rule and the noise floor
+only in C1 (37.7 against 42.7\,ms) and C7 (36.2 against 44.6\,ms). With hit
+ratios between 50\% and 76\%, the slowest 5\% of reads are still misses that
+wait for the dependency, so a cache of this kind shortens the typical read
+(p50 fell by about half in C4 and by 40\% in C7) far more than the slow tail.
+
+The second half of H2 was not supported as stated. In C3 the hit ratio stayed
+between 73\% and 76\% from 100 to 2{,}000 requests per second, because the
+number of environments grew with the load and each environment kept receiving
+about the same number of requests within its TTL (Figure~\ref{fig:output4}).
+The mechanism behind H2 was nonetheless visible wherever requests were spread
+over more environments: a burst of 100 simultaneous requests (C2) and a slow
+dependency (C5) lowered the hit ratio to 50\% against 70\% in C1; retries in
+the outage lowered it from 59\% to 47\% (Retry+Cache against Cache); and with
+the breaker, reads spread over about 32 environments found a stale entry only
+1.2\% of the time, against 16.8\% with two environments (Section~\ref{sec:h3}).
+What lowers the hit ratio is the number of requests each environment receives
+within the TTL, not the arrival rate. In C3 the warm-up also created more
+environments than the ramp later needed, so the ramp never forced requests into
+empty caches; a ramp without warm-up would test the prediction more severely.
+H2 is therefore partly supported: the cache reduces dependency calls and cost
+clearly and read latency slightly, and its effectiveness depends on how many
+environments share the traffic, but not on the arrival rate as such.
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+\textbf{Configuration} & \textbf{C1} & \textbf{C2} & \textbf{C3} & \textbf{C4} & \textbf{C5} & \textbf{C6} & \textbf{C7} \\
+\midrule
+Base & 42.7 & 1,391 & 50.0 & 44.2 & 341.0 & 1,138 & 44.6 \\
+Retry & 44.7 & 1,404 & 47.9 & 159.4\,$\uparrow$ & 341.1 & 3,165\,$\uparrow$ & 1,071\,$\uparrow$ \\
+Cache & 37.7\,$\downarrow$ & 1,373 & 42.4 & 36.0 & 338.7 & 1,142 & 36.2\,$\downarrow$ \\
+Retry+Cache & 38.4 & 1,427 & 42.1\,$\downarrow$ & 42.1 & 339.2 & 3,167\,$\uparrow$ & 1,064\,$\uparrow$ \\
+\bottomrule
+\end{tabular}
+\caption{p95 of reads alone in ms, median of five runs. An arrow marks a
+difference from Base that passes the range rule and is larger than the 4.4\,ms
+noise floor of the overall p95 (Retry+Cache in C1 passes the range rule but,
+at 4.3\,ms, not the floor).}
+\label{tab:readp95}
+\end{table}
+
 
 % =====================================================================
 \section{Discussion}
-\todo{Answers to RQ1--RQ3; status of H1--H3; competing explanations;
-limitations.}
+\subsection{Answers to the Research Questions}
+The primary question asked to what extent retries and in-function caching make
+a Lambda-based API more reliable than an unprotected baseline, and at what
+price. The answer depends on the kind of failure. Neither mechanism helped with
+the two failures that are about the platform rather than the dependency: the
+1.4\,s p95 of a cold-start burst (C2) was the same in every configuration, and
+under a 20-fold load ramp (C3) the baseline itself stayed within 5\,ms of its
+normal p95 without a throttled request. Both mechanisms helped only against
+failures of the dependency, and only some of them.
+
+\paragraph{RQ1 (fault tolerance).} Retries are the right tool for independent,
+short failures and the wrong one for lasting ones. Under 10\% transient faults
+they removed nearly all read failures and made 40\% of the minutes compliant,
+at the price of a p95 three times higher (145 against 47\,ms) that still stayed
+far within the 500\,ms target. Against a slowdown beyond the timeout or a full
+outage they changed nothing that matters to a user: requests failed as before,
+three times later and up to 65\% more expensively. The cache protected reads in
+every fault condition in which the dependency had answered before, lowering the
+C4 error rate from 10\% to 3.7\% and the C7 error rate from 33\% to 20\%, but
+only for as long as its entries lived, about 30\,s into the outage. Combining
+the two was not additive: under the outage, retries took away most of the
+cache's protection (31\% errors against 20\%) by holding environments busy, so
+Lambda spread the traffic over more and emptier caches. The circuit breaker of
+T4 repaired part of this. With the cache, it served expired entries while the
+dependency was down and halved the error rate again (9.1\% against 20.1\%);
+with retries, it removed the backoff waits (p95 about 45\,ms instead of
+1{,}050\,ms). Its price was a recovery of 5 to 15\,s after the dependency
+returned, which cost one compliant minute in C7.
+
+\paragraph{RQ2 (concurrency).} The per-environment cache was most effective
+when few environments shared the traffic and least effective when requests were
+spread over many: 70\% to 76\% of reads hit in C1 and C3, 50\% in a burst and
+with a slow dependency, 47\% with retries in the outage, and almost no stale
+entries were available to a breaker spread over 32 environments. Concurrency
+itself did not lower the hit ratio, because Lambda added environments in
+proportion to the load (Section~\ref{sec:h12}). Cold starts mattered in the
+burst, where 100 environments started at once, each with an empty cache; in
+the ramp the warm-up had already created enough environments.
+
+\paragraph{RQ3 (cost).} Retry overhead was smaller than expected where faults
+were transient, because rescued requests count as successes: the cost per
+successful request fell by 5\% in C4. Where the dependency stayed down, retries
+raised it by about 65\%. Cache hits saved 8\% to 30\% in every condition with
+successes, the most with a slow dependency, where each hit also saves the
+waiting that Lambda bills; the breaker added a further 16\% to 37\% saving in
+C7 by not calling a dependency that could not answer. The 60\,s TTL made
+between 0.3\% and 4.7\% of hits return a price that had already changed, and
+5.9\% of the breaker's stale fallbacks did so, a small price for a read API but
+not one that every application could accept.
+
+\subsection{Status of the Hypotheses}
+Table~\ref{tab:hypotheses} summarises the verdicts of Sections~\ref{sec:h12}
+and \ref{sec:h3}.
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}p{2.4cm}X@{}}
+\toprule
+\textbf{Hypothesis} & \textbf{Verdict} & \textbf{Evidence} \\
+\midrule
+H1 Retries & Supported, with a correction &
+  Reads 0.02\% against 0.01\% predicted, 1.10 calls per request against 1.11;
+  overall 1.03\%, at the 1\% floor set by orders, which are not retried; no SLO
+  minute gained in C6 or C7, where p99 rose to 3.2\,s and 1.2\,s and cost by
+  65\% in C7. \\
+H2 Cache & Partly supported &
+  Dependency calls 0.38--0.55 per request and cost 8--30\% lower; read p95 a few
+  ms lower, confirmed in C1 and C7 only; hit ratio flat across the C3 ramp, but
+  lower wherever traffic was spread over more environments. \\
+H3 Breaker & Partly supported &
+  Fast answers while open (p95 about 45\,ms with retries; 16.8\% of reads served
+  from expired entries with the cache), but the waiting removed was backoff, not
+  timeouts; recovery 5--10\,s, never more than 15\,s; time to open longer with
+  more environments, but confounded with the configuration (inconclusive). \\
+\bottomrule
+\end{tabularx}
+\caption{Verdicts on the three hypotheses.}
+\label{tab:hypotheses}
+\end{table}
+
+\subsection{Ranking of the Mechanisms}
+The midterm design promised a ranking by the reduction in non-compliant SLO
+minutes relative to the added cost and complexity. Retries come first. They
+were the only mechanism that turned failing minutes into compliant ones (6 of
+the 15 C4 minutes, against none for Base), for 18 lines of code and six
+parameters, and they cost extra only where the dependency stayed down. The
+cache comes second. It did not change a single SLO verdict, because every
+condition it improved stayed above the 1\% error limit, but it is the simplest
+mechanism (18 lines and one parameter, the TTL) and the only one that lowered
+cost everywhere. The breaker comes last on this criterion. It lost one
+compliant minute in C7 in every configuration (one of three minutes instead of
+two), because its recovery tail spilled into the minute after the outage, and
+it was the most complex: 29 lines for the state machine, about 60 lines in the
+handler for the fallback and the headers, and two parameters. Measured by error
+rate rather than by minutes, the order changes: Cache+Breaker had the lowest
+error rate in the outage, and the cache was the mechanism that helped in most
+conditions. The binary SLO with three one-minute windows per run decides close
+cases by chance (Table~\ref{tab:slo-matrix}) and hides how far each
+configuration misses the target; a team choosing mechanisms should look at the
+error rate and cost as well as at the verdict.
+
+\subsection{Competing Explanations}
+The midterm design named controls for the obvious alternative explanations.
+That retries, not a quieter period, lowered the C4 error rate follows from the
+interleaved run order, in which Base and Retry ran in the same sessions under
+the same fault seed, and from the number of extra calls: 0.10 extra calls per
+request is exactly one extra call for every read attempt that met an injected
+fault ($0.9 \times (0.1 + 0.01 + 0.001) \approx 0.10$). That empty
+caches, not TTL expiry or the Zipf tail, explain the lower hit ratios follows
+from where they fell: expiry and the tail act in every environment alike and
+cannot explain why the same configuration hit 70\% of reads in C1 and 50\% in
+C2, whereas the number of environments changed with exactly the conditions in
+which the hit ratio fell. That the C2 latency came from cold starts, not from
+the load host, follows from the cold starts recorded in every C2 run and from
+the validity checks: no dropped iterations and load-host CPU at most 70\% in
+every run. Two
+explanations could not be excluded. The breaker runs were made after the runs they
+are compared with, on a different day from most of them, while the noise floor was measured within
+sessions, so a small drift between the days could add to their differences;
+the large effects (errors halved, p95 cut by 95\%) are far beyond any drift
+seen between sessions, but the 1-point changes are not. And in C3 the warm-up,
+not the ramp, created the environments, so the test of H2 under rising load
+was weaker than planned.
+
+\subsection{Limitations}
+The limitations named in the midterm design still apply: one region, one
+runtime, one memory size, one retry policy, and one TTL, so the results do not
+show optimal parameters or carry over to other platforms; a synthetic
+dependency whose faults are independent (C4) or total (C7), not partial or
+correlated in other ways; a load host in the same region, so no Internet
+latency; and environment scheduling that Lambda controls. The experiment added
+four of its own. First, the stopped dependency in C7 answers at once, so the
+breaker was never tested against the timeouts that H3 names; a breaker run in
+C6 would test that. Second, orders are not retried, by design, which sets a
+floor of about 1\% under transient faults and makes C4's SLO verdicts depend on
+chance. Third, the warm-up before C3 hides the cold starts of a ramp. Fourth,
+with three minutes per run, the SLO verdicts are coarse: one failing minute
+moves a run's compliance by a third. Five runs per cell keep the range rule
+conservative, so several real but small differences are reported as
+inconclusive rather than as effects.
 
 % =====================================================================
 \section{Differences from the Midterm Plan}
@@ -1514,6 +1729,11 @@ Nov 20 & The cache keeps entries after their 60\,s lifetime; \texttt{get}
   is deleted when it expires. The midterm did not say what counts as one of the
   five failures; counting attempts would let the retry policy, not the outage,
   open the breaker. \\
+Nov 20 & The metrics also report the p95 of reads alone, and every run was
+  analysed again from its raw files to add it. &
+  H2 is about read latency, and the overall p95 also contains orders, which
+  never touch the cache. The rerun reproduced every earlier result, including
+  the noise floor and all 25 effects. \\
 \bottomrule
 \end{tabularx}
 \caption{Changes from the midterm plan.}
