@@ -14,7 +14,7 @@ export AWS_PROFILE
 # (1796083200 is 2026-12-01 00:00 UTC).
 export SOURCE_DATE_EPOCH := 1796083200
 
-.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run experiment metrics plot summary plan-check results analyze analyze-quick h3 check-report reproduce
+.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run experiment metrics plot summary plan-check results analyze analyze-quick h3 check-report reproduce t5
 
 init:
 	$(TF) init
@@ -36,6 +36,11 @@ test:
 
 test-integration:
 	$(PY) -m pytest -m integration -v
+
+# Task T5 completion test (midterm Table 1): 1,000 POSTs with one Idempotency-Key from
+# 50 concurrent clients give one order and one stock decrement. Needs the deployed stack.
+t5:
+	$(PY) -m pytest -m integration -v tests/integration/test_t5_dedup.py
 
 ct5:
 	$(PY) tests/integration/ct5_fault_calibration.py

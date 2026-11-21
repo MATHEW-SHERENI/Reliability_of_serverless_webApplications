@@ -33,7 +33,8 @@ data "aws_iam_policy_document" "dependency" {
   }
   statement {
     sid       = "WriteOrders"
-    actions   = ["dynamodb:PutItem"]
+    # GetItem (task T5): a repeated key reads back the order it already placed.
+    actions   = ["dynamodb:PutItem", "dynamodb:GetItem"]
     resources = [aws_dynamodb_table.orders.arn]
   }
   statement {

@@ -8,7 +8,14 @@ Flags, read once when the environment starts, select the configuration:
 MECH_RETRY (deadline-aware retries for product reads), MECH_CACHE (a
 per-environment 60 s cache for product reads), and MECH_BREAKER (task T4: a
 per-environment circuit breaker in front of the dependency). All off is the
-Base configuration. Orders are never retried (until T5) and never cached.
+Base configuration. Orders are never cached, and never retried unless
+MECH_IDEMPOTENCY is on.
+
+MECH_IDEMPOTENCY (task T5) makes POST /orders idempotent: the Idempotency-Key
+header claims a record in DynamoDB, a repeat of the same request gets the
+first response back unchanged (Idempotent-Replay: true) without a dependency
+call, and the dependency derives the order ID from the key, so even a retried
+reservation cannot create a second order. Only then are orders retried.
 
 While the breaker is open, no dependency call is made: a product read is served
 from the cache even if its entry has expired (X-Cache: STALE), or fails at once
@@ -21,6 +28,7 @@ import random
 import time
 import uuid
 
+import idempotency
 import reliability
 from dep_client import (DependencyClient, DependencyClientError,
                         DependencyServerError, DependencyTimeout)
@@ -43,6 +51,7 @@ def parse_flag(name, env=os.environ):
 MECH_RETRY = parse_flag("MECH_RETRY")
 MECH_CACHE = parse_flag("MECH_CACHE")
 MECH_BREAKER = parse_flag("MECH_BREAKER")
+MECH_IDEMPOTENCY = parse_flag("MECH_IDEMPOTENCY")
 CONFIG_NAMES = {(False, False): "Base", (True, False): "Retry",
                 (False, True): "Cache", (True, True): "Retry+Cache"}
 
@@ -53,6 +62,7 @@ _breaker = reliability.CircuitBreaker(_clock)   # so does the breaker's state
 
 _cold = True      # True only for the first request this environment serves
 _client = None    # created on first use, then reused while the environment is warm
+_idempotency = None   # the T5 store, created on first use like the client
 
 
 def get_client():
@@ -61,6 +71,14 @@ def get_client():
         _client = DependencyClient(os.environ["DEPENDENCY_URL"],
                                    os.environ.get("AWS_REGION", "us-east-2"))
     return _client
+
+
+def get_idempotency():
+    global _idempotency
+    if _idempotency is None:
+        table = idempotency.DynamoTable(os.environ["IDEMPOTENCY_TABLE"])
+        _idempotency = idempotency.IdempotencyStore(table, _clock)
+    return _idempotency
 
 
 def parse_product_id(raw):
@@ -104,6 +122,8 @@ class Outcome:
         self.data_version = None
         self.error_detail = None
         self.degraded = False
+        self.raw_body = None        # T5: the exact response text, sent unchanged
+        self.idempotency = None     # T5: new, replay, conflict, or busy
 
 
 class BreakerOpen(Exception):
@@ -190,21 +210,90 @@ def get_product(raw_id, outcome):
     outcome.data_version = item.get("version")
 
 
-def create_order(body, outcome):
+def place_order(order, outcome, key=None):
+    """Reserve stock through the breaker. Without a key: one attempt, never
+    retried, since a retry could place the order twice. With a key (T5): the
+    dependency deduplicates by key, so the retry policy may be used."""
+    if key is None:
+        def reserve():
+            outcome.attempts = 1
+            return get_client().reserve(*order, timeout_s=ATTEMPT_TIMEOUT_S)
+    else:
+        def attempt(timeout_s):
+            return get_client().reserve(*order, timeout_s=timeout_s, idempotency_key=key)
+
+        def reserve():
+            if not MECH_RETRY:
+                outcome.attempts = 1
+                return attempt(ATTEMPT_TIMEOUT_S)
+            try:
+                result = reliability.call_with_retry(attempt, _clock, _rng)
+            except Exception as err:
+                outcome.attempts = getattr(err, "attempts", 1)
+                raise
+            outcome.attempts = result.attempts
+            return result.value
+    try:
+        return through_breaker(reserve)
+    except BreakerOpen:
+        outcome.degraded = True                   # orders have no fallback: 503 at once
+        raise
+
+
+def header(headers, name):
+    """A request header by name, in any letter case (HTTP names are case-insensitive)."""
+    for key, value in (headers or {}).items():
+        if key.lower() == name.lower():
+            return value
+    return None
+
+
+def create_order(body, outcome, headers=None):
     order = parse_order(body)
     if order is None:
         outcome.status = 400
         outcome.body = {"error": "body needs integer product_id (1-1000) and quantity (1-10)"}
         return
-    def reserve():
-        outcome.attempts = 1
-        return get_client().reserve(*order, timeout_s=ATTEMPT_TIMEOUT_S)
+    if not MECH_IDEMPOTENCY:
+        outcome.status, outcome.body = 200, place_order(order, outcome)
+        return
+    create_order_once(order, outcome, header(headers, "Idempotency-Key"))
+
+
+def create_order_once(order, outcome, key):
+    """T5: place the order once per key; repeats get the first response back."""
+    started = _clock.now()                        # the 3 s budget counts from here
+    if not idempotency.valid_key(key):
+        outcome.status = 400
+        outcome.body = {"error": "Idempotency-Key header must be 1-128 printable "
+                                 "ASCII characters without spaces"}
+        return
+    store = get_idempotency()
+    request_hash = idempotency.body_hash({"product_id": order[0], "quantity": order[1]})
+    state, record = store.begin(key, request_hash)
+    if state == "busy":
+        state, record = store.wait(key, request_hash,
+                                   started + reliability.DEADLINE_MS / 1000)
+    outcome.idempotency = state
+    if state == "replay":                         # no dependency call: attempts stays 0
+        outcome.status, outcome.raw_body = 200, record["response_body"]
+        return
+    if state == "conflict":
+        outcome.status = 422
+        outcome.body = {"error": "idempotency key reused with a different request"}
+        return
+    if state == "busy":
+        outcome.status = 409
+        outcome.body = {"error": "a request with this key is still in progress"}
+        return
     try:
-        result = through_breaker(reserve)
-    except BreakerOpen:
-        outcome.degraded = True                   # orders have no fallback: 503 at once
+        result = place_order(order, outcome, key)
+    except BaseException:
+        store.abandon(key)                        # failed: release the key for a retry
         raise
-    outcome.status, outcome.body = 200, result
+    raw = json.dumps(result)
+    store.complete(key, raw)
+    outcome.status, outcome.raw_body = 200, raw
 
 
 def handler(event, context):
@@ -218,7 +307,7 @@ def handler(event, context):
         if route == "GET /products/{id}":
             get_product((event.get("pathParameters") or {}).get("id"), outcome)
         elif route == "POST /orders":
-            create_order(decode_body(event), outcome)
+            create_order(decode_body(event), outcome, event.get("headers"))
         else:
             outcome.status, outcome.body = 404, {"error": f"no route {route}"}
     except DependencyClientError as err:
@@ -251,6 +340,7 @@ def handler(event, context):
         "cache": outcome.cache,
         "breaker": _breaker.state if MECH_BREAKER else "off",
         "degraded": outcome.degraded,
+        "idempotency": outcome.idempotency,
         "latency_ms": round(latency_ms, 2),
         "error": outcome.error_detail,
     }))
@@ -269,5 +359,7 @@ def handler(event, context):
         headers["X-Breaker"] = _breaker.state
     if outcome.degraded:
         headers["X-Degraded"] = "true"
-    return {"statusCode": outcome.status, "headers": headers,
-            "body": json.dumps(outcome.body)}
+    if outcome.idempotency == "replay":
+        headers["Idempotent-Replay"] = "true"
+    body = outcome.raw_body if outcome.raw_body is not None else json.dumps(outcome.body)
+    return {"statusCode": outcome.status, "headers": headers, "body": body}

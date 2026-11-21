@@ -46,8 +46,11 @@ class DependencyClient:
     def get_item(self, product_id, timeout_s):
         return self._call("GET", f"/items/{product_id}", None, timeout_s)
 
-    def reserve(self, product_id, quantity, timeout_s):
-        body = json.dumps({"product_id": product_id, "quantity": quantity})
+    def reserve(self, product_id, quantity, timeout_s, idempotency_key=None):
+        request = {"product_id": product_id, "quantity": quantity}
+        if idempotency_key is not None:          # task T5: the dependency deduplicates
+            request["idempotency_key"] = idempotency_key
+        body = json.dumps(request)
         return self._call("POST", "/reserve", body, timeout_s)
 
     def _signed_headers(self, method, url, body):

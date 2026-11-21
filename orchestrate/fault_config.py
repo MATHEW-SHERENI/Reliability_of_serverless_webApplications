@@ -29,11 +29,12 @@ def merged_variables(current, settings):
     return variables
 
 
-def mechanism_variables(current, retry, cache, run_id="none", breaker=False):
-    """Return the new variable set: the three mechanism flags and the run ID.
+def mechanism_variables(current, retry, cache, run_id="none", breaker=False,
+                        idempotency=False):
+    """Return the new variable set: the four mechanism flags and the run ID.
 
     Every flag is written on every run, so a breaker run cannot leave the
-    breaker on for the next run. The run ID changes for every run, so every run
+    breaker on for the next run (nor a T5 check leave idempotency on). The run ID changes for every run, so every run
     starts new execution environments (which C2 measures) and the Catalog's log
     lines name the run.
     """
@@ -41,6 +42,7 @@ def mechanism_variables(current, retry, cache, run_id="none", breaker=False):
     variables["MECH_RETRY"] = "true" if retry else "false"
     variables["MECH_CACHE"] = "true" if cache else "false"
     variables["MECH_BREAKER"] = "true" if breaker else "false"
+    variables["MECH_IDEMPOTENCY"] = "true" if idempotency else "false"
     variables["RUN_ID"] = str(run_id)
     return variables
 
@@ -62,7 +64,8 @@ def set_faults(function_name, region="us-east-2", **settings):
 
 
 def set_mechanisms(function_name, retry, cache, region="us-east-2", run_id="none",
-                   breaker=False):
+                   breaker=False, idempotency=False):
     """Switch the Catalog's mechanism flags and wait until AWS has applied them."""
     update_variables(function_name, region,
-                     lambda current: mechanism_variables(current, retry, cache, run_id, breaker))
+                     lambda current: mechanism_variables(current, retry, cache, run_id, breaker,
+                                                         idempotency))

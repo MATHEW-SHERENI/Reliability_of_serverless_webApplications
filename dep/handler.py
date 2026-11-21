@@ -5,6 +5,7 @@ arrow 3). Day 03 builds the normal behaviour; the fault injector is added on
 Day 04.
 """
 import base64
+import hashlib
 import json
 import os
 import re
@@ -62,8 +63,27 @@ def get_item(product_id):
     return response(200, to_product(result["Item"]))
 
 
+def order_id_for(key):
+    """Task T5: the order ID a key always gets, so a key can place only one order."""
+    return "o-" + hashlib.sha256(key.encode()).hexdigest()[:32]
+
+
+def stored_order(order_id):
+    """The saved order, as POST /reserve answered it the first time."""
+    item = _dynamodb.get_item(TableName=ORDERS_TABLE, Key={"order_id": {"S": order_id}},
+                              ConsistentRead=True)["Item"]
+    return {"order_id": item["order_id"]["S"], "product_id": int(item["product_id"]["N"]),
+            "quantity": int(item["quantity"]["N"])}
+
+
 def reserve(body):
-    """POST /reserve: decrement stock and record the order, both or neither."""
+    """POST /reserve: decrement stock and record the order, both or neither.
+
+    With an idempotency key (task T5), the order ID comes from the key and the
+    order is written only if that ID is new. A repeat with the same key, even a
+    retry after a lost answer, then finds the order already there and gets it
+    back without a second stock decrement.
+    """
     try:
         request = json.loads(body or "{}")
         product_id = int(request["product_id"])
@@ -73,7 +93,19 @@ def reserve(body):
     if quantity < 1:
         return response(400, {"error": "quantity must be at least 1"})
 
-    order_id = str(uuid.uuid4())
+    key = request.get("idempotency_key")
+    order_id = order_id_for(key) if key else str(uuid.uuid4())
+    put = {
+        "TableName": ORDERS_TABLE,
+        "Item": {
+            "order_id": {"S": order_id},
+            "product_id": {"N": str(product_id)},
+            "quantity": {"N": str(quantity)},
+            "created_at": {"S": datetime.now(timezone.utc).isoformat()},
+        },
+    }
+    if key:
+        put["ConditionExpression"] = "attribute_not_exists(order_id)"
     try:
         _dynamodb.transact_write_items(TransactItems=[
             {"Update": {
@@ -83,18 +115,15 @@ def reserve(body):
                 "ConditionExpression": "attribute_exists(product_id) AND stock >= :q",
                 "ExpressionAttributeValues": {":q": {"N": str(quantity)}},
             }},
-            {"Put": {
-                "TableName": ORDERS_TABLE,
-                "Item": {
-                    "order_id": {"S": order_id},
-                    "product_id": {"N": str(product_id)},
-                    "quantity": {"N": str(quantity)},
-                    "created_at": {"S": datetime.now(timezone.utc).isoformat()},
-                },
-            }},
+            {"Put": put},
         ])
     except ClientError as err:
         if err.response["Error"]["Code"] == "TransactionCanceledException":
+            reasons = err.response.get("CancellationReasons") or []
+            # Reason 2 is the order Put: its condition fails only if this key's
+            # order exists. That wins even if stock has also run out since.
+            if key and len(reasons) > 1 and reasons[1].get("Code") == "ConditionalCheckFailed":
+                return response(200, stored_order(order_id))
             return response(409, {"error": "not enough stock or unknown product"})
         raise
     return response(200, {"order_id": order_id, "product_id": product_id,

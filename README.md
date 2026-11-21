@@ -19,7 +19,7 @@ work progresses, in `report/final_report.tex`.
 | T2 Reliability mechanisms: retries and in-function cache | Done except two CT4 handler tests (CT3, CT4 unit tests pass; flags switch configurations live) |
 | T3 Measurement pipeline and evaluation (140 runs) | Done, tag `v0.3-results`: 5 sessions, 145 runs (140 + 5 A/A controls), all valid at the first attempt; `make reproduce` regenerates every table and figure from the raw files and checks the report |
 | T4 Circuit breaker (ambitious) | Done, tag `v0.3-results`: state-transition tests pass (`tests/unit/test_breaker.py`); C7 with the breaker in four configurations, 5 repetitions, 20 valid runs (`experiments/breaker.json`, `make h3`) |
-| T5 Request deduplication (if time permits) | Planned |
+| T5 Request deduplication (if time permits) | Code and 64 unit tests done (57 written test-first on branch `t5-tests`); flag `MECH_IDEMPOTENCY`, off by default; completion test `make t5` on AWS next |
 
 ## Architecture
 
@@ -74,8 +74,9 @@ The virtual environment does not need to be activated: the Makefile calls
 | `make deploy` | Create or update all AWS resources |
 | `make destroy` | Delete all AWS resources |
 | `make seed` | Write the 1,000-product catalog (seed 5360) |
-| `make test` | Unit tests (205), no AWS access |
+| `make test` | Unit tests (269), no AWS access |
 | `make test-integration` | Integration tests that need the deployed stack (CT1) |
+| `make t5` | Task T5 completion test, about 1 minute: 1,000 `POST /orders` with one `Idempotency-Key` from 50 concurrent clients must give one order, one stock decrement, 200 everywhere with identical bodies, and 999 `Idempotent-Replay: true` |
 | `make ct5` | Fault injector calibration, about 4 minutes (CT5) |
 | `make smoke-load` | 25-second, 10% k6 run from this computer (checks script and API) |
 | `make data-init`, `make data-deploy` | Create the versioned results bucket once (separate stack, never destroyed by `make destroy`) |

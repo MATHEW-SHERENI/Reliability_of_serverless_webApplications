@@ -26,6 +26,12 @@ data "aws_iam_policy_document" "catalog" {
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
     resources = ["${aws_cloudwatch_log_group.catalog.arn}:*"]
   }
+  # Task T5: claim, read, complete and release idempotency records.
+  statement {
+    sid       = "IdempotencyRecords"
+    actions   = ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem"]
+    resources = [aws_dynamodb_table.idempotency.arn]
+  }
 }
 
 resource "aws_iam_role_policy" "catalog" {
@@ -57,6 +63,8 @@ resource "aws_lambda_function" "catalog" {
       MECH_RETRY         = "false"
       MECH_CACHE         = "false"
       MECH_BREAKER       = "false"
+      MECH_IDEMPOTENCY   = "false"
+      IDEMPOTENCY_TABLE  = aws_dynamodb_table.idempotency.name
       RUN_ID             = "none"
     }
   }

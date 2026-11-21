@@ -22,9 +22,10 @@ def test_unknown_setting_is_rejected():
 
 def test_mechanism_flags_are_written_as_true_or_false():
     result = mechanism_variables({"DEPENDENCY_URL": "https://x"}, retry=True, cache=False)
-    # MECH_BREAKER (Day 26) is always written, so no run inherits the previous run's breaker.
+    # MECH_BREAKER (Day 26) and MECH_IDEMPOTENCY (Day 32, T5) are always written, so no
+    # run inherits the previous run's breaker or idempotency setting.
     assert result == {"DEPENDENCY_URL": "https://x", "MECH_RETRY": "true", "MECH_CACHE": "false",
-                      "MECH_BREAKER": "false", "RUN_ID": "none"}
+                      "MECH_BREAKER": "false", "MECH_IDEMPOTENCY": "false", "RUN_ID": "none"}
 
 
 def test_mechanism_variables_carry_the_run_id():
