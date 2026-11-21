@@ -69,8 +69,14 @@ C7 ran with the breaker in all four configurations for five repetitions, 20
 valid runs (Section~\ref{sec:h3}). T3 and T4 are tagged
 \texttt{v0.3-results}.
 
-\todo{Objective as delivered; status of T2 (after the two CT4 handler tests)
-and T5.}
+\textbf{T5 (request deduplication), completed November 21.} The optional task
+was done after the results, with its tests written first. The completion
+criterion is met: on the deployed stack, 1{,}000 orders sent with one
+idempotency key by 50 concurrent clients all received 200 with identical
+bodies, 999 of them marked as replays, and produced exactly one order and one
+stock decrement (Section~\ref{sec:t5-test}).
+
+\todo{Objective as delivered; status of T2 (after the two CT4 handler tests).}
 
 % =====================================================================
 \section{Implementation}
@@ -376,7 +382,8 @@ succeeded, so a single 503 or 404 is never served for the next 60\,s. With the
 retry flag on, the read goes through \texttt{call\_with\_retry}, and a failed
 read reports how many attempts it made. Orders are never retried, because a
 retried reservation after a timeout could reserve stock twice when the first
-attempt had in fact succeeded; this stays so until request deduplication (T5).
+attempt had in fact succeeded. Only with request deduplication (T5) switched
+on are orders retried (Section~\ref{sec:t5}).
 Orders are also never cached, and an order does not remove the product from the
 cache: each environment holds its own cache, so clearing one would leave the
 others stale anyway, and that staleness is what the stale-response rate
@@ -575,6 +582,43 @@ configurations without the breaker are the comparison. The metrics gained
 three counts: degraded responses, stale fallback reads, and how many of those
 were outdated under the staleness rule of Output~5. A 503 from an open breaker
 is counted as its own failure cause.
+
+\subsection{Request Deduplication (T5)}\label{sec:t5}
+T5 was the optional task, to be done only if time allowed. With the grid, the
+breaker, and the reproduction check finished by November 20, I started it on
+November 21, writing the tests first as the plan required
+(Section~\ref{sec:t5-test}).
+
+A fourth flag, \texttt{MECH\_IDEMPOTENCY}, switches T5 on and is off by
+default, so every configuration measured in the experiment behaves exactly as
+before. With the flag on, a \texttt{POST /orders} needs an
+\texttt{Idempotency-Key} header of 1 to 128 printable ASCII characters (400
+otherwise). The handler then tries to claim the key in the idempotency table
+with a conditional write that succeeds only if no live record has that key
+(midterm Figure~2(b)). The request that wins places the order and stores the
+exact response body. Every later request with the same key and the same order
+gets that body back unchanged, with \texttt{Idempotent-Replay: true} and no
+dependency call; a request with the same key but a different product or
+quantity gets 422. A request that arrives while the first is still running
+waits, reading the record every 50\,ms, until the first completes or the 3\,s
+request deadline passes (then 409). If the first request fails, it releases
+the key, so the client can retry. Records expire after 24 hours; because
+DynamoDB deletes expired items only eventually, an expired record counts as
+absent when a new claim is made.
+
+The key also reaches the dependency, which derives the order ID from it and
+writes the order only if that ID is new, in the same transaction as the stock
+decrement. A repeated reservation therefore finds its order already stored and
+returns it without a second decrement. This is what makes it safe to retry an
+order at all: a retry after a lost answer cannot place the order twice. With
+T5 on, orders therefore go through the retry policy like reads, which the
+midterm plan allowed only after T5 (Section~1).
+
+One limitation remains. A request that crashes after claiming its key, for
+example when Lambda stops it at its 5\,s timeout, cannot release the claim, so
+the key stays in progress until its record expires and repeats get 409 until
+then. The 3\,s request deadline makes this unlikely, and a shorter lease for
+records in progress would remove it.
 
 % =====================================================================
 \section{Architecture as Built}
@@ -855,6 +899,38 @@ shows a figure as changed only when its content changes. A single command,
 the pilot, the full experiment, and the breaker experiment from the raw files,
 copies the figures into the report, and runs the check. All 205 unit tests pass
 on Python 3.12 and 3.13.
+
+
+\subsection{T5: Idempotent Orders}\label{sec:t5-test}
+The T5 tests were written before its code, as the midterm plan required for
+delegated work. Claude fixed the behaviour of Section~\ref{sec:t5} in a
+written specification, with the module, function, and header names the code
+would use, and a coding agent wrote the unit tests and the completion test
+from it on a separate branch. I reviewed the tests line by line, and Claude's
+review asked for five changes, all made before any T5 code was written: a
+60\,s margin in the completion test for a laptop clock running ahead of
+Lambda's, the flag set explicitly in the flag-off tests, a request without
+headers, a replay while the breaker is open, and one test per behaviour. Of
+the resulting 57 unit tests, 52 failed at that point because the code did not
+exist, and five passed because they check that nothing changes with the flag
+off or without a key. The code was then written against
+these tests without changing any of them; the only existing test that changed
+is the list of variables the orchestrator writes, which now includes the new
+flag. Seven further tests check the calls to the DynamoDB table itself, which
+the agent's tests replace with the in-memory table. A mutation check made ten
+deliberate changes to the T5 code, among them accepting a space in a key,
+ignoring expiry, not releasing a failed claim, and matching the header name
+only in one letter case; all ten were caught. All 269 unit tests pass on
+Python 3.12 and 3.13.
+
+The completion test ran on November 21 against a stack deployed from scratch.
+It switched T5 on, sent 1{,}000 identical orders for product 17 with one key
+from 50 concurrent clients, and switched T5 off again. All 1{,}000 responses
+were 200 with bodies of one and the same SHA-256 hash; 999 carried
+\texttt{Idempotent-Replay: true} and the first did not; the stock of product 17
+fell by exactly one; the orders table held exactly one new order for it, the
+one named in the responses; and the idempotency record was complete with the
+hash of that body. The test took 10.4\,s.
 
 % =====================================================================
 \section{Results}
@@ -1775,6 +1851,13 @@ Nov 20 & The metrics also report the p95 of reads alone, and every run was
   H2 is about read latency, and the overall p95 also contains orders, which
   never touch the cache. The rerun reproduced every earlier result, including
   the noise floor and all 25 effects. \\
+Nov 21 & T5 also deduplicates in the dependency: the order ID is derived from
+  the key and written only if new. A key reused for a different order gets
+  422; a repeat while the first request is running waits up to the 3\,s
+  deadline, then gets 409. T5 is behind its own flag, off by default. &
+  The midterm deduplicated only in the Catalog, which cannot tell whether a
+  reservation that timed out was placed, so retrying orders would still risk a
+  second order. The flag keeps every measured configuration unchanged. \\
 \bottomrule
 \end{tabularx}
 \caption{Changes from the midterm plan.}
@@ -2001,6 +2084,22 @@ Nov 20 & The metrics also report the p95 of reads alone, and every run was
   generated table compiles. The C3 cold-start count of zero looked wrong to
   Claude; a check of the raw records that I ran showed it was right, because the
   warm-up had already created more environments than the ramp needed.
+  \item Nov 20: after I recorded the go decision for T4, Claude wrote the
+  circuit breaker, its state-transition and handler tests, the mutation check,
+  and the breaker plan. I deployed the stack and ran the 20 breaker runs.
+  Claude wrote the H3 analysis with its tests, interpreted the results, and
+  drafted the H1--H3 verdicts and the Discussion from the numbers I produced;
+  for H2 it added the p95 of reads alone, and I re-analysed every run to
+  obtain it. Claude then wrote \texttt{make check-report}, which found three
+  numbers Claude had typed wrongly into the effects table and a bug in the
+  output~5 table, and \texttt{make reproduce}. I ran every regeneration and
+  check and tagged \texttt{v0.3-results}.
+  \item Nov 21: Claude wrote the T5 specification as a prompt, from which a
+  coding agent\todo{name the agent used} wrote the T5 tests; I reviewed them
+  line by line, and Claude reviewed them and wrote a second prompt with five
+  changes, which the agent made. Claude then wrote the T5 code against these
+  tests, seven further tests, and the mutation check. I deployed the stack,
+  ran the completion test, and merged the branch.
 \end{itemize}
 
 % =====================================================================
