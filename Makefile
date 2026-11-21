@@ -14,7 +14,7 @@ export AWS_PROFILE
 # (1796083200 is 2026-12-01 00:00 UTC).
 export SOURCE_DATE_EPOCH := 1796083200
 
-.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run experiment metrics plot summary plan-check results analyze analyze-quick h3 check-report
+.PHONY: init plan deploy destroy seed test test-integration ct5 smoke-load data-init data-deploy ec2-run experiment metrics plot summary plan-check results analyze analyze-quick h3 check-report reproduce
 
 init:
 	$(TF) init
@@ -114,4 +114,16 @@ h3:
 # Day 29: every table of the report against the regenerated results; fails on any
 # difference. Run after make analyze, make results PLAN=experiments/breaker.json, make h3.
 check-report:
+	$(PY) analysis/check_report.py
+
+# T3 completion criterion (midterm Table 1): one command regenerates every table and
+# figure of the report from the raw run files, copies the figures into report/, and
+# checks every table of the report against the regenerated results. No AWS needed.
+reproduce: analyze
+	$(PY) analysis/pipeline.py pilot
+	$(PY) analysis/pipeline.py breaker
+	$(PY) analysis/breaker.py
+	cp $(lastword $(sort $(wildcard results/pilot-*Z/comparison.pdf))) report/figures/pilot_comparison.pdf
+	cp results/full-summary/output3_c7.pdf results/full-summary/output4_c3.pdf report/figures/
+	cp results/h3/h3_c7.pdf results/h3/h3_opening.pdf report/figures/
 	$(PY) analysis/check_report.py

@@ -53,8 +53,24 @@ setting, CT5 measured 10.35\% injected failures over 10{,}000 calls, and a
 fresh clone of the repository succeeded. The code is tagged
 \texttt{v0.1-testbed}.
 
-\todo{Objective as delivered; status of T2--T5 with completion criteria and
-evidence.}
+\textbf{T3 (measurement pipeline and evaluation), completed November 20.} The
+full grid ran in five sessions on November 18 and 19: the 140 runs of the plan
+and five A/A control runs, all valid at the first attempt. The raw k6 records,
+exported Lambda log lines, and manifest of every run are kept locally and in
+the results bucket. The completion criterion is met: \texttt{make reproduce}
+regenerates every table and figure of the results from these raw files and
+checks the report against them (Section~\ref{sec:reproduced}).
+
+\textbf{T4 (circuit breaker), completed November 20.} The midterm schedule
+allowed T4 only if the grid finished by November 24, and it finished on
+November 19. Both completion criteria are met: the state-transition tests pass
+(closed $\to$ open $\to$ half-open $\to$ closed, and half-open $\to$ open), and
+C7 ran with the breaker in all four configurations for five repetitions, 20
+valid runs (Section~\ref{sec:h3}). T3 and T4 are tagged
+\texttt{v0.3-results}.
+
+\todo{Objective as delivered; status of T2 (after the two CT4 handler tests)
+and T5.}
 
 % =====================================================================
 \section{Implementation}
@@ -814,6 +830,31 @@ caught at once. The survivor, a 404 no longer counted as a success, showed
 that the 404 test could not tell the difference, because six 404 answers alone
 never open the breaker. The test now puts a 404 between two series of four
 failures, and all eight changes are caught.
+
+\subsection{Results Reproduced from Raw Data}\label{sec:reproduced}
+On November 20, every result in this report was regenerated from the raw run
+files. The summaries of both experiments were deleted, and the analysis rebuilt
+the metrics of all 165 runs (145 in the full experiment and 20 with the
+breaker), every summary, and every table and figure. A new check,
+\texttt{make check-report}, then compared the report with these files. For the
+seven tables that the analysis writes as LaTeX (output~1, the A/A comparison,
+outputs 2, 4, and 5, and the two H3 tables), every data row has to appear in
+the report unchanged. For the two tables I laid out by hand
+(Tables~\ref{tab:effects} and \ref{tab:readp95}), each of their 328 numbers has
+to equal the regenerated value rounded as printed. The first comparison found
+four problems. Three numbers in the effects table had been typed wrongly in
+their last digit: a p95 maximum of 1{,}462 instead of 1{,}461\,ms, and two hit
+ratios 0.1 points too high. The generated output~5 table also listed the two
+breaker configurations with a cache as rows of dashes, a bug introduced when
+the breaker configurations were added; a new unit test now covers it. After
+these fixes, every table in the report matched the data, and the noise floor
+and all 25 effects came out as before. The figures now carry a fixed creation
+date, so regenerating them from unchanged data gives identical files, and Git
+shows a figure as changed only when its content changes. A single command,
+\texttt{make reproduce}, now does all of this: it regenerates the results of
+the pilot, the full experiment, and the breaker experiment from the raw files,
+copies the figures into the report, and runs the check. All 205 unit tests pass
+on Python 3.12 and 3.13.
 
 % =====================================================================
 \section{Results}
