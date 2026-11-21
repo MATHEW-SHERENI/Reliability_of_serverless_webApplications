@@ -1,10 +1,10 @@
-"""T5, midterm Table 1: 1,000 same-key POSTs from 50 clients create one order."""
+"""T5 (midterm Table 1). 1,000 same-key requests from 50 clients produce one stored order, one stock decrement, and 999 replays."""
 import hashlib
 import json
 import subprocess
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import boto3
 import pytest
@@ -59,7 +59,8 @@ def test_one_thousand_posts_create_one_order_and_decrement_stock_once():
     try:
         set_mechanisms(function, retry=False, cache=False, idempotency=True)
         before = stock()
-        start = datetime.now(timezone.utc).isoformat()
+        # Allow for the laptop clock running ahead of Lambda when it timestamps the order.
+        start = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
         with ThreadPoolExecutor(max_workers=50) as pool:
             responses = list(pool.map(post, range(1000)))
         assert len(responses) == 1000 and all(r.status == 200 for r in responses)

@@ -1,4 +1,4 @@
-"""T5, midterm Table 1: transmit the shared key and explicitly control deduplication."""
+"""T5 (midterm Table 1). The dependency client forwards reservation keys and the orchestrator sets the idempotency flag."""
 import json
 
 from orchestrate import fault_config

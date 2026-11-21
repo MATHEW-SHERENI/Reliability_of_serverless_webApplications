@@ -1,4 +1,4 @@
-"""T5, midterm Table 1: POST /orders reserves once and replays identical bytes."""
+"""T5 (midterm Table 1). The order handler validates keys, resolves competing claims, retries reservations, and replays responses."""
 import json
 from unittest.mock import Mock
 
@@ -124,16 +124,13 @@ def test_failed_reservation_allows_fresh_request(monkeypatch, clock, client, err
     assert [c[-1] for c in client.calls] == [KEY, KEY]
 
 
-@pytest.mark.parametrize("action", ["complete", "abandon", "busy", "conflict"])
-def test_wait_handles_owner_outcome(monkeypatch, clock, client, action):
-    """Resolve a pending claim on the fake clock, or exhaust the request budget."""
+def _pending_claim(monkeypatch, clock):
     store, _ = _enable(monkeypatch, clock)
     from idempotency import body_hash
 
     clock.advance(20)
     deadline = clock.now() + 3
     store.begin(KEY, body_hash(BODY))
-    raw = '{ "quantity": 1, "order_id":"o-example", "product_id":17 }'
     original_begin = store.begin
 
     def begin(key, request_hash):
@@ -141,34 +138,89 @@ def test_wait_handles_owner_outcome(monkeypatch, clock, client, action):
         clock.advance(1)  # Claim lookup consumes one second of the same request budget.
         return result
 
+    monkeypatch.setattr(store, "begin", begin)
+    return store, deadline
+
+
+def test_busy_then_completed_replays(monkeypatch, clock, client):
+    """An owner completing during the wait supplies the exact replay bytes."""
+    store, _ = _pending_claim(monkeypatch, clock)
+    raw = '{ "quantity": 1, "order_id":"o-example", "product_id":17 }'
+
     def sleep(seconds):
         clock.advance(seconds)
-        if action == "complete":
-            store.complete(KEY, raw)
-        elif action == "abandon":
-            store.abandon(KEY)
-        elif action == "conflict":
-            store.abandon(KEY)
-            original_begin(KEY, body_hash({**BODY, "quantity": 2}))
-            store.complete(KEY, "{}")
+        store.complete(KEY, raw)
 
-    monkeypatch.setattr(store, "begin", begin)
     monkeypatch.setattr(clock, "sleep", sleep)
     response = app.handler(_event(), FakeContext())
-    if action == "complete":
-        assert response["statusCode"] == 200 and response["body"] == raw
-        assert response["headers"]["Idempotent-Replay"] == "true"
-        assert response["headers"]["X-Attempts"] == "0" and client.calls == []
-    elif action == "abandon":
-        assert response["statusCode"] == 200 and len(client.calls) == 1
-        assert "Idempotent-Replay" not in response["headers"]
-    elif action == "conflict":
-        assert response["statusCode"] == 422 and client.calls == []
-        assert json.loads(response["body"]) == {"error": "idempotency key reused with a different request"}
-    else:
-        assert response["statusCode"] == 409 and client.calls == []
-        assert json.loads(response["body"]) == {"error": "a request with this key is still in progress"}
-        assert deadline <= clock.now() <= deadline + 0.05 + 1e-9
+    assert response["statusCode"] == 200 and response["body"] == raw
+    assert response["headers"]["Idempotent-Replay"] == "true"
+    assert response["headers"]["X-Attempts"] == "0" and client.calls == []
+
+
+def test_busy_then_abandoned_takes_over(monkeypatch, clock, client):
+    """An abandoned claim lets the waiting request reserve once."""
+    store, _ = _pending_claim(monkeypatch, clock)
+
+    def sleep(seconds):
+        clock.advance(seconds)
+        store.abandon(KEY)
+
+    monkeypatch.setattr(clock, "sleep", sleep)
+    response = app.handler(_event(), FakeContext())
+    assert response["statusCode"] == 200 and len(client.calls) == 1
+    assert "Idempotent-Replay" not in response["headers"]
+
+
+def test_busy_then_other_request_conflicts(monkeypatch, clock, client):
+    """A different order completing under the key conflicts with the waiter."""
+    store, _ = _pending_claim(monkeypatch, clock)
+    from idempotency import body_hash
+
+    def sleep(seconds):
+        clock.advance(seconds)
+        store.abandon(KEY)
+        store.begin(KEY, body_hash({**BODY, "quantity": 2}))
+        store.complete(KEY, "{}")
+
+    monkeypatch.setattr(clock, "sleep", sleep)
+    status, body, _ = call(_event())
+    assert status == 422 and client.calls == []
+    assert body == {"error": "idempotency key reused with a different request"}
+
+
+def test_busy_until_deadline_is_409(monkeypatch, clock, client):
+    """The three-second budget includes the initial claim lookup."""
+    _, deadline = _pending_claim(monkeypatch, clock)
+    status, body, _ = call(_event())
+    assert status == 409 and client.calls == []
+    assert body == {"error": "a request with this key is still in progress"}
+    assert deadline <= clock.now() <= deadline + 0.05 + 1e-9
+
+
+def test_event_without_headers_is_rejected(monkeypatch, clock, client):
+    """API Gateway can omit the headers field entirely."""
+    _enable(monkeypatch, clock)
+    spy = Mock()
+    monkeypatch.setattr(app, "_idempotency", spy)
+    event = _event()
+    del event["headers"]
+    assert call(event)[0] == 400
+    assert spy.mock_calls == [] and client.calls == []
+
+
+def test_replay_needs_no_dependency_even_when_breaker_open(monkeypatch, clock, client):
+    """A saved response remains available after the dependency breaker opens."""
+    _enable(monkeypatch, clock)
+    event = _event()
+    first = app.handler(event, FakeContext())
+    assert first["statusCode"] == 200 and len(client.calls) == 1
+    monkeypatch.setattr(app, "MECH_BREAKER", True)
+    monkeypatch.setattr(app._breaker, "allow", lambda: False)
+    replay = app.handler(event, FakeContext())
+    assert replay["statusCode"] == 200 and replay["body"] == first["body"]
+    assert replay["headers"]["Idempotent-Replay"] == "true"
+    assert len(client.calls) == 1
 
 
 def test_expired_key_triggers_new_reservation(monkeypatch, clock, client):
@@ -206,8 +258,9 @@ def test_open_breaker_abandons(monkeypatch, clock, client):
     assert call(_event())[0] == 503 and table.get(KEY) is None and client.calls == []
 
 
-def test_flag_off_keeps_legacy_reserve_signature(fake, retry_on):
-    """The default ignores keys and never retries an unprotected reservation."""
+def test_flag_off_keeps_legacy_reserve_signature(fake, retry_on, monkeypatch):
+    """Disabling idempotency ignores keys and prevents reservation retries."""
+    monkeypatch.setattr(app, "MECH_IDEMPOTENCY", False, raising=False)
     fake.script = [server_error(), ORDER]
     for expected in (503, 200):
         code, _, headers = call(_event())
@@ -215,8 +268,9 @@ def test_flag_off_keeps_legacy_reserve_signature(fake, retry_on):
     assert fake.calls == [("reserve", 17, 1, 1.0)] * 2
 
 
-def test_flag_off_reserves_twice_for_two_identical_orders(fake):
+def test_flag_off_reserves_twice_for_two_identical_orders(fake, monkeypatch):
     """Repeated successful requests retain the legacy unkeyed call signature."""
+    monkeypatch.setattr(app, "MECH_IDEMPOTENCY", False, raising=False)
     fake.result = ORDER
     for _ in range(2):
         status, body, headers = call(_event())

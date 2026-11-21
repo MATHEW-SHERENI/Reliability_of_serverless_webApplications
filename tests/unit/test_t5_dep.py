@@ -1,4 +1,4 @@
-"""T5, midterm Table 1: duplicate transactions create one order and decrement once."""
+"""T5 (midterm Table 1). Keyed dependency reservations create one order and decrement stock once per key."""
 import hashlib
 import importlib.util
 import json

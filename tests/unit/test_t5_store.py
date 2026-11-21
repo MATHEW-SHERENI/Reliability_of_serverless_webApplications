@@ -1,4 +1,4 @@
-"""T5, midterm Table 1: shared keys yield one order and identical replay bodies."""
+"""T5 (midterm Table 1). The idempotency store validates keys and manages claims, completion, abandonment, expiry, and waiting."""
 import hashlib
 
 import pytest
