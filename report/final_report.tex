@@ -24,6 +24,7 @@
 \usepackage[font=small,skip=3pt]{caption}
 \usepackage{titlesec}
 \usepackage[hidelinks]{hyperref}
+\usepackage{xurl}   % long URLs in the references may break at any character
 
 \setlist{nosep, topsep=2pt, leftmargin=1.5em}
 \titlespacing*{\section}{0pt}{8pt plus 2pt minus 2pt}{3pt plus 1pt}
@@ -44,6 +45,20 @@ CSCI 5360 Web Technologies, Fall 2026 \quad December 10, 2026
 
 % =====================================================================
 \section{Assigned Project and Final Scope}
+B10 asks when a serverless web API stops meeting its reliability target and
+which reliability mechanisms help. I built a product catalog API on AWS Lambda
+behind an API Gateway HTTP API, with a simulated dependency whose faults can be
+switched on, and measured how retries and an in-function cache, alone and
+together, change latency, errors, recovery time, and cost under seven
+conditions: a warm steady load, a cold-start burst, a load ramp to 2{,}000
+requests per second, transient faults, a slow dependency, timeouts, and a
+1-minute outage. The objective was delivered as planned, with all three
+essential tasks, the ambitious task T4 (a circuit breaker), and the optional
+task T5 (idempotent orders). In short, retries rescued requests only under
+short transient faults, the cache lowered cost everywhere and errors under
+faults without ever changing an SLO verdict, and the breaker made failures fast
+but delayed recovery by up to 15\,s (Section~7).
+
 \textbf{T1 (testbed), completed November 4.} The catalog API, the simulated
 dependency with its fault injector, and all supporting resources are defined in
 Terraform; \texttt{make deploy} creates the 18 resources in us-east-2 and
@@ -53,6 +68,16 @@ setting, CT5 measured 10.35\% injected failures over 10{,}000 calls, and a
 (Section~\ref{sec:testing}). CT1 and CT2 also pass, and a deployment from a
 fresh clone of the repository succeeded. The code is tagged
 \texttt{v0.1-testbed}.
+
+\textbf{T2 (retries and cache), completed November 10.} The retry policy and
+the per-environment cache were written against CT3 and CT4, which existed
+before the code (Section~5.4), and switched on and off by configuration flags.
+CT3 and the cache-level CT4 tests pass, and on the deployed stack Retry made
+four attempts against a failing dependency where Base made one, and repeated
+reads returned \texttt{X-Cache:
+HIT} (Section~5.5). Both mechanisms ran in all 145 runs of the full
+experiment.\todo{Add here when the two CT4 handler tests (no dependency call on
+a hit, POST never cached) are written and pass.}
 
 \textbf{T3 (measurement pipeline and evaluation), completed November 20.} The
 full grid ran in five sessions on November 18 and 19: the 140 runs of the plan
@@ -77,7 +102,6 @@ idempotency key by 50 concurrent clients all received 200 with identical
 bodies, 999 of them marked as replays, and produced exactly one order and one
 stock decrement (Section~\ref{sec:t5-test}).
 
-\todo{Objective as delivered; status of T2 (after the two CT4 handler tests).}
 
 % =====================================================================
 \section{Implementation}
@@ -642,8 +666,9 @@ load host through AWS Systems Manager Run Command (\ding{179}), so the host need
 no SSH key and runs nothing but k6. After the run, k6's records go to the
 results bucket (\ding{180}) and from there to the laptop. Second, the log lines
 are exported with the CloudWatch Logs \texttt{FilterLogEvents} call instead of
-Logs Insights queries, because a Logs Insights query returns at most 10{,}000
-rows and a C3 run produces far more log lines than that.
+Logs Insights queries: a Logs Insights query returns 10{,}000 rows by default and
+at most 100{,}000 [\ref{ref:insights}], while a C3 run sends about 230{,}000
+requests, each with log lines from both functions.
 
 \begin{figure}[htbp]
 \centering
@@ -714,9 +739,109 @@ Idempotency (T5) & \texttt{idem\_key} (key), \texttt{status},
 \end{table}
 
 % =====================================================================
-\section{Methodology as Executed}
-\todo{Research question, hypotheses, conditions, and repetitions as actually
-run; deviations from the midterm design.}
+\section{Methodology as Executed}\label{sec:method}
+The research question, the hypotheses, and the experimental design are those
+of midterm Section~4; this section states how they were run and where the
+execution departed from the plan. Every departure is also a row of
+Section~\ref{sec:differences}.
+
+\subsection{Question and Hypotheses}
+The primary question asked to what extent retries with exponential backoff and
+jitter and in-function response caching make an AWS Lambda API more reliable
+than an unprotected baseline under cold starts, burst concurrency, and
+dependency failures, and at what cost in latency, throughput, and money. RQ1
+to RQ3 (fault tolerance, cache effectiveness under concurrency, and cost) and
+the three hypotheses are unchanged. One hypothesis was restated during the
+work: after the pilot, the expected C4 error rate with retries (H1) was
+written as about 1\% for all requests and 0.01\% for reads, because orders are
+never retried and make up 10\% of the requests. H3, planned for the ambitious
+task, was tested because the decision gate passed (Section~\ref{sec:t4impl}).
+The positioning is also unchanged: the experiment tests end to end, on a
+Lambda API with per-request cost accounting, the claims that jitter prevents
+synchronized retries and that retries multiply load on a failing dependency
+[\ref{ref:brooker2015}, \ref{ref:brooker2019}], and it builds on the
+observation that new execution environments start cold
+[\ref{ref:wang2018}, \ref{ref:shahrad2020}] to ask what that means for a cache
+kept in each environment.
+
+\subsection{Configurations and Conditions}
+The full experiment compared the four planned configurations: Base, Retry,
+Cache, and Retry+Cache. The four configurations with the breaker (T4) ran only
+in C7, as the midterm planned. The idempotency flag of T5 was off in every
+run, so no measured run is affected by it. All fixed parameters of midterm
+Table~3 held: us-east-2, Python 3.12, 256\,MB, 5\,s function timeout, 1\,s per
+attempt, a 3\,s request deadline, at most four attempts with full jitter, a
+60\,s cache lifetime for product reads only, and reserved concurrency of 400
+per function. Table~\ref{tab:conditions} gives the seven conditions as they
+ran. Every run began by setting the configuration and the fault schedule,
+which makes Lambda start new execution environments; the 30\,s warm-up that
+follows is excluded from the analysis, except in C2, whose purpose is to
+measure those cold starts.
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}l>{\RaggedRight}X>{\RaggedRight\arraybackslash}X@{}}
+\toprule
+\textbf{Condition} & \textbf{Injected at the dependency} & \textbf{Workload after the warm-up} \\
+\midrule
+C1 Warm steady & none & 50 requests/s for 180\,s \\
+C2 Cold start & none; the configuration update starts new environments &
+  100 simultaneous reads, then 50 requests/s for 30\,s; no warm-up \\
+C3 Ramp & none & 100, 250, 500, 1{,}000, 2{,}000 requests/s, 60\,s each \\
+C4 Transient & 10\% of calls return 503 & 50 requests/s for 180\,s \\
+C5 Slow & +300\,ms per call & 50 requests/s for 180\,s \\
+C6 Timeout & +1{,}500\,ms per call & 50 requests/s for 180\,s \\
+C7 Outage & every call fails from 60 to 120\,s of the measured phase &
+  50 requests/s for 180\,s \\
+\bottomrule
+\end{tabularx}
+\caption{Conditions as run. Steady conditions start with a 30\,s warm-up at
+the same rate (C3: at 100 requests/s), which is excluded from the analysis.}
+\label{tab:conditions}
+\end{table}
+
+\subsection{Workload, Repetitions, and Validity}
+The workload was open, as planned: k6 sent requests at the planned arrival
+rate whether or not the API kept up, with all virtual users created before the
+run so that none had to start mid-run. Product IDs followed a Zipf
+distribution ($s = 1$) over 1{,}000 products, 90\% of requests were reads and
+10\% orders, every order carried a unique idempotency key, and the client gave
+up after 10\,s. During every run the price updater changed 1\% of prices every
+10\,s, so that stale cache hits could be counted.
+
+Each of the 28 cells ran five times. The 140 runs were split into five
+sessions, each holding one repetition of every cell in a seeded, interleaved
+order, plus one extra Base run under C1 as the A/A control, so 29 runs per
+session and 145 in all. A pilot of 8 runs and a shakedown of 10 runs came
+first. The breaker experiment was a sixth session of 20 runs: the four breaker
+configurations in C7, five times each, with the same seed, workload, and
+outage. A run was valid only if k6 dropped no iteration, the load host's CPU
+stayed at or below 70\%, and every expected file was present; an invalid run
+was queued again, at most twice. All 163 runs of the pilot, the shakedown, and
+the full experiment were valid at the first attempt; in the breaker session,
+two attempts were invalid and were repeated successfully
+(Section~\ref{sec:h3}).
+
+\subsection{Measurement and Analysis}
+The metrics are those of midterm Section~4.2, computed per run as described in
+Section~2.15 and checked by CT6: nearest-rank percentiles, the failure rule
+(no answer within 10\,s, 429, or 500 and above), 1-minute SLO windows,
+recovery time $R$ in 5\,s buckets from the end of the outage, and the cost $C$
+per 1{,}000 successful requests, including DynamoDB request units, at the
+us-east-2 list prices of the midterm, which still held in November 2026
+[\ref{ref:lambda-price}, \ref{ref:apigw-price}, \ref{ref:ddb-price}]. SLO windows
+are counted from the planned start of the measured phase, so that each window
+lines up with the fault schedule. For each cell, the median and the range of
+the five per-run values are reported, and a difference counts as an effect only
+if the ranges do not overlap. One control was added to the plan: the two
+identical Base runs of each session give an A/A noise floor for the error
+rate, p95, and cost, and an effect must also exceed that floor
+(Section~6.5). The five planned outputs, the H3 comparison, the p95 of reads
+alone (added for H2), and the ranking of the mechanisms are all produced from
+the raw files by \texttt{make reproduce}, and \texttt{make check-report}
+confirms that every table in this report matches them
+(Section~\ref{sec:reproduced}).
 
 % =====================================================================
 \section{Testing}\label{sec:testing}
@@ -1832,7 +1957,7 @@ conservative, so several real but small differences are reported as
 inconclusive rather than as effects.
 
 % =====================================================================
-\section{Differences from the Midterm Plan}
+\section{Differences from the Midterm Plan}\label{sec:differences}
 
 \begin{table}[htbp]
 \centering
@@ -1891,8 +2016,9 @@ Nov 14 & The orchestrator and the price updater run on the development
   and all control code runs from one checked-out commit. \\
 Nov 14 & Lambda log lines are exported with \texttt{FilterLogEvents}, not
   queried with Logs Insights. &
-  A Logs Insights query returns at most 10{,}000 rows, far fewer than the log
-  lines of a C3 run. \\
+  A Logs Insights query returns at most 100{,}000 rows (10{,}000 by default),
+  fewer than the log lines of one C3 run, which sends about 230{,}000
+  requests. \\
 Nov 14 & The 30\,s warm-up is part of the k6 run, not a separate step of the
   orchestrator. &
   One timed phase in one tool keeps the warm-up and the measured phase
@@ -2201,7 +2327,31 @@ Nov 21 & T5 also deduplicates in the dependency: the order ID is derived from
 
 % =====================================================================
 \section*{References}
-\todo{Carry over the verified references from the midterm and add any new
-sources actually used.}
+\begin{enumerate}[label={[\arabic*]}, ref=\arabic*, leftmargin=*, itemsep=2pt]
+  \item\label{ref:brooker2015} M. Brooker, ``Exponential Backoff and Jitter,''
+  AWS Architecture Blog, 2015.
+  \url{https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/}
+  \item\label{ref:brooker2019} M. Brooker, ``Timeouts, retries, and backoff
+  with jitter,'' Amazon Builders' Library, 2019.
+  \url{https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/}
+  \item\label{ref:wang2018} L. Wang, M. Li, Y. Zhang, T. Ristenpart, and
+  M. Swift, ``Peeking Behind the Curtains of Serverless Platforms,'' in
+  \emph{Proc.\ USENIX ATC}, 2018.
+  \item\label{ref:shahrad2020} M. Shahrad et al., ``Serverless in the Wild:
+  Characterizing and Optimizing the Serverless Workload at a Large Cloud
+  Provider,'' in \emph{Proc.\ USENIX ATC}, 2020.
+  \item\label{ref:lambda-price} Amazon Web Services, ``AWS Lambda pricing.''
+  \url{https://aws.amazon.com/lambda/pricing/} (accessed November 23, 2026).
+  \item\label{ref:apigw-price} Amazon Web Services, ``Amazon API Gateway
+  pricing.'' \url{https://aws.amazon.com/api-gateway/pricing/} (accessed
+  November 23, 2026).
+  \item\label{ref:ddb-price} Amazon Web Services, ``Amazon DynamoDB pricing for
+  on-demand capacity.'' \url{https://aws.amazon.com/dynamodb/pricing/on-demand/}
+  (accessed November 23, 2026).
+  \item\label{ref:insights} Amazon Web Services, ``limit,'' \emph{Amazon
+  CloudWatch Logs User Guide}.
+  \url{https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/CWL_QuerySyntax-Limit.html}
+  (accessed November 23, 2026).
+\end{enumerate}
 
 \end{document}
