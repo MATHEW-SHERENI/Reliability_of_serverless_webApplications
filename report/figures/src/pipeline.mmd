@@ -1,0 +1,18 @@
+%% Request pipeline inside one Catalog execution environment, as built (final report, Section 3).
+flowchart LR
+  EV(["HTTP API<br/>event"]) --> H["Handler M1<br/>validate · route"]
+  subgraph ENV["One execution environment (cache, breaker state and clients are per environment)"]
+    H -- "POST" --> I["Idempotency<br/>check T5"]
+    H -- "GET" --> C{"Cache M2<br/>fresh entry?"}
+    I -- "new key" --> B["Breaker T4<br/>closed / half-open?"]
+    C -- "miss" --> B
+    B -- "yes" --> R["Retry policy M2<br/>≤ 4 attempts, jitter,<br/>3 s deadline"]
+    R --> D["Dependency<br/>client M3<br/>1 s per attempt"]
+  end
+  D -- "HTTPS" --> DEP[("Dependency<br/>Lambda")]
+  I -- "seen: replay<br/>or 409 / 422" --> OUT(["response +<br/>diagnostic headers"])
+  C -- "hit" --> OUT
+  B -- "open: expired entry<br/>or 503 X-Degraded" --> OUT
+  D --> OUT
+  classDef default font-size:19px;
+  linkStyle default font-size:19px;

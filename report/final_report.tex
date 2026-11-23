@@ -20,6 +20,7 @@
 \usepackage{enumitem}
 \usepackage{xcolor}
 \usepackage{amsmath}
+\usepackage{pifont}   % circled numbers in the architecture figure text
 \usepackage[font=small,skip=3pt]{caption}
 \usepackage{titlesec}
 \usepackage[hidelinks]{hyperref}
@@ -538,7 +539,7 @@ error rates (reads $p$ for Base and $p^4$ for Retry, orders $p$ everywhere),
 and writes a LaTeX table and a figure comparing the four configurations under
 each condition.
 
-\subsection{Circuit Breaker (T4)}
+\subsection{Circuit Breaker (T4)}\label{sec:t4impl}
 The midterm schedule allowed the ambitious task only if the full grid finished
 by November 24. It finished earlier, with every run valid, so on November 20 I
 decided to go ahead with T4. The breaker follows the midterm specification
@@ -621,9 +622,96 @@ then. The 3\,s request deadline makes this unlikely, and a shorter lease for
 records in progress would remove it.
 
 % =====================================================================
-\section{Architecture as Built}
-\todo{Final architecture and internal design figures; note any differences
-from midterm Figures 1 and 2.}
+\section{Architecture as Built}\label{sec:architecture}
+Figure~\ref{fig:architecture} shows the system as it ran in the experiment.
+Its request path is the one planned in midterm Figure~1: k6 on the load host
+sends requests over HTTPS to the HTTP API (\ding{172}), which invokes the
+Catalog function (\ding{173}); on a cache miss the Catalog calls the
+dependency's function URL with a SigV4 signature and a 1\,s timeout per
+attempt (\ding{174}), and the dependency reads the product or reserves stock in
+DynamoDB (\ding{175}). With T5 switched on, the Catalog also claims each
+order's key in the idempotency table (\ding{176}). Both functions write their
+log lines to CloudWatch Logs.
+
+The control and measurement path changed in two places. First, the
+orchestrator and the price updater run on the development laptop, not on the
+load host. Before each run the orchestrator sets the Catalog's mechanism flags
+and the dependency's fault schedule (\ding{177}); during the run the price
+updater changes 1\% of prices every 10\,s (\ding{178}); and k6 is started on the
+load host through AWS Systems Manager Run Command (\ding{179}), so the host needs
+no SSH key and runs nothing but k6. After the run, k6's records go to the
+results bucket (\ding{180}) and from there to the laptop. Second, the log lines
+are exported with the CloudWatch Logs \texttt{FilterLogEvents} call instead of
+Logs Insights queries, because a Logs Insights query returns at most 10{,}000
+rows and a C3 run produces far more log lines than that.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.86\linewidth]{figures/architecture.pdf}
+\caption{Architecture as built. Solid arrows: request path; dashed arrows:
+control and measurement path. \ding{172} GET /products/\{id\} and POST
+/orders; \ding{173} Lambda proxy integration; \ding{174} SigV4-signed call to
+the dependency's function URL, 1\,s per attempt; \ding{175} GetItem, and for an
+order the stock decrement and the order record in one transaction;
+\ding{176} conditional claim of the idempotency key (T5); \ding{177} mechanism
+flags and fault schedule set before each run; \ding{178} the price updater's
+version increments; \ding{179} k6 started through Systems Manager;
+\ding{180} per-request records uploaded after each run.}
+\label{fig:architecture}
+\end{figure}
+
+Figure~\ref{fig:pipeline} shows the request pipeline inside one Catalog
+execution environment. The order of the stages is the planned one: handler,
+cache, breaker, retry policy, dependency client. The cache, the breaker's
+state, the cold-start flag, and the dependency client live at module scope, so
+each execution environment has its own; this per-environment state is what H2
+and H3 test. Two parts work differently from midterm Figure~2. The breaker's
+fallback can serve a cache entry whose 60\,s lifetime has passed, because the
+cache now keeps expired entries for this purpose (Section~\ref{sec:t4impl}). And an order with a new
+key reaches the dependency with the key, which then derives the order ID from
+it, so a repeated reservation cannot create a second order (Section~\ref{sec:t5}).
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{figures/pipeline.pdf}
+\caption{Request pipeline inside one Catalog execution environment, as built.
+A GET answered from a fresh cache entry, a repeated order key (T5), and an open
+breaker each return without calling the dependency.}
+\label{fig:pipeline}
+\end{figure}
+
+The data model has the three tables planned in midterm Figure~2(b)
+(Table~\ref{tab:datamodel}). The dependency writes an order in the same
+transaction as the stock decrement, so stock and orders always agree, and the
+idempotency record keeps a hash of the request so that a key reused for a
+different order can be refused. The diagrams are drawn with Mermaid from
+sources kept in \texttt{report/figures/src}.
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}l>{\RaggedRight}X>{\RaggedRight\arraybackslash}X@{}}
+\toprule
+\textbf{Table} & \textbf{Attributes} & \textbf{Constraint} \\
+\midrule
+Products & \texttt{product\_id} (key, 1--1{,}000), \texttt{name},
+  \texttt{price}, \texttt{stock}, \texttt{version} &
+  Stock is decremented only if it stays at or above zero; the price updater
+  increments \texttt{version}. \\
+Orders & \texttt{order\_id} (key), \texttt{product\_id}, \texttt{quantity}
+  (1--10), \texttt{created\_at} &
+  Written in one transaction with the stock decrement; with a T5 key, the ID is
+  derived from the key and written only if new. \\
+Idempotency (T5) & \texttt{idem\_key} (key), \texttt{status},
+  \texttt{request\_hash}, \texttt{response\_body}, \texttt{response\_hash},
+  \texttt{expires\_at} &
+  Claimed only if absent or expired; \texttt{status} is IN\_PROGRESS or
+  COMPLETED; DynamoDB deletes the record after 24 hours (TTL). \\
+\bottomrule
+\end{tabularx}
+\caption{DynamoDB data model as built.}
+\label{tab:datamodel}
+\end{table}
 
 % =====================================================================
 \section{Methodology as Executed}
@@ -1796,6 +1884,15 @@ Nov 14 & CT7 is tested with a scripted backend instead of by forcing a real
   k6 run to drop iterations and an S3 upload to fail. &
   The scripted failures are exactly repeatable and cost nothing; real
   failures of both kinds were caught by the same code on November 11 and 14. \\
+Nov 14 & The orchestrator and the price updater run on the development
+  laptop and start k6 on the load host through Systems Manager Run Command;
+  only k6 runs on the host. &
+  The host stays a plain k6 runner whose CPU load is measured for validity,
+  and all control code runs from one checked-out commit. \\
+Nov 14 & Lambda log lines are exported with \texttt{FilterLogEvents}, not
+  queried with Logs Insights. &
+  A Logs Insights query returns at most 10{,}000 rows, far fewer than the log
+  lines of a C3 run. \\
 Nov 14 & The 30\,s warm-up is part of the k6 run, not a separate step of the
   orchestrator. &
   One timed phase in one tool keeps the warm-up and the measured phase

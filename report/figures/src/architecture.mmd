@@ -1,0 +1,36 @@
+%% Architecture as built (final report, Section 3). Solid: request path; dashed: control and measurement.
+flowchart TB
+  subgraph LAP["Development laptop"]
+    ORCH["Orchestrator M6<br/>+ price updater"]
+    ANA["Analysis M7<br/>make reproduce"]
+  end
+  subgraph EC2["EC2 load host"]
+    K6["k6 load<br/>generator M5"]
+  end
+  subgraph AWS["AWS serverless, us-east-2"]
+    GW["API Gateway<br/>HTTP API"]
+    CAT["<b>Catalog API</b> Lambda M1–M3<br/>cache · breaker · retry<br/>idempotency (T5)"]
+    DEP["<b>Dependency</b> Lambda M4<br/>fault injector"]
+    DDB[("DynamoDB<br/>products · orders")]
+    IDEM[("DynamoDB<br/>idempotency (T5)")]
+  end
+  subgraph OBS["Evidence"]
+    S3[("S3 results<br/>bucket")]
+    CW[("CloudWatch<br/>Logs")]
+  end
+  K6 -- "① HTTPS" --> GW
+  GW -- "②" --> CAT
+  CAT -- "③ SigV4, 1 s timeout" --> DEP
+  DEP -- "④ read; stock + order<br/>in one transaction" --> DDB
+  CAT -- "⑤ claim key" --> IDEM
+  ORCH -. "⑥ flags, faults" .-> CAT
+  ORCH -. "⑥" .-> DEP
+  ORCH -. "⑦ prices" .-> DDB
+  ORCH -. "⑧ SSM: run k6" .-> K6
+  K6 -. "⑨ records" .-> S3
+  CAT -. "log lines" .-> CW
+  DEP -.-> CW
+  S3 -. "download" .-> ANA
+  CW -. "export" .-> ANA
+  classDef default font-size:19px;
+  linkStyle default font-size:19px;
