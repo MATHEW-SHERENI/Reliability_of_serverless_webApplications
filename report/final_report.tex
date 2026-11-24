@@ -2089,14 +2089,21 @@ Nov 21 & T5 also deduplicates in the dependency: the order ID is derived from
 
 % =====================================================================
 \section{Lessons Learned}
+Three lessons reach beyond this project. Measure before believing: identical
+runs differed, an unexpected zero had a simple cause, and only planned
+controls and checks of the raw data told noise and artefacts from effects.
+Reliability mechanisms interact through the platform: Lambda's per-environment
+state decided how much the cache and the breaker could help, and retries
+changed that state. And every number in a report should be regenerated and
+checked by code, because careful hand work still drifted. The other lessons
+follow by topic.
+
+\subsection{AWS and the Serverless Platform}
 \begin{itemize}
   \item Service quotas are regional: a quota increase must be checked in the
   region where the experiments run, not only where it was requested.
   \item Credits can hide spending: a budget that includes credits would show
   no cost while the credit is being used up, so the alert must exclude them.
-  \item The local interpreter can differ from the cloud runtime (Python 3.14
-  locally, 3.12 in Lambda); pinning the project version avoids tests that pass
-  locally but fail in Lambda.
   \item AWS CLI profile names are case-sensitive: Terraform failed with
   ``failed to get shared config profile'' because it asked for \texttt{b10}
   while the profile was named \texttt{B10}.
@@ -2104,11 +2111,6 @@ Nov 21 & T5 also deduplicates in the dependency: the order ID is derived from
   Terraform destroy and recreate it (shown as \texttt{-/+} and
   ``forces replacement'' in the plan), which would lose data on a populated
   table. Reading every plan before applying it is essential.
-  \item In a Makefile, an undefined variable silently becomes an empty string,
-  so a missing \texttt{PY := ...} line produced confusing errors instead of a
-  clear message; the Makefile now calls the project interpreter
-  (\texttt{.venv/bin/python}) directly so it works without activating the
-  environment.
   \item Lambda bills the initialization phase of a cold start: billed duration
   equalled handler duration plus initialization time.
   \item \texttt{aws lambda update-function-configuration --environment}
@@ -2117,14 +2119,8 @@ Nov 21 & T5 also deduplicates in the dependency: the order ID is derived from
   \item A Lambda invocation reports two status codes: the invocation status
   (200 when the function ran) and the HTTP status the function returned (for
   example 503). Metrics must use the HTTP status seen by the client.
-  \item HTTP libraries can retry on their own (urllib3 does by default); left
-  enabled, these hidden retries would make the baseline configuration retry and
-  invalidate the comparison, so they are disabled and tested.
   \item The first call after deployment combined a cold start and a new TLS
   connection and took about 19 times as long as warm calls.
-  \item In Python, \texttt{True} counts as an integer, so input validation
-  compares exact types; otherwise \texttt{"quantity": true} would be accepted
-  as an order of one.
   \item Initialization time in the \texttt{REPORT} line understates the full
   cold-start cost: the first end-to-end request took about 350\,ms longer than
   the dependency's reported initialization and handler time, so client-side
@@ -2134,13 +2130,6 @@ Nov 21 & T5 also deduplicates in the dependency: the order ID is derived from
   discarded.
   \item Pooled connections are closed after a short idle period, which is one
   reason to discard a warm-up period before measuring.
-  \item A measurement taken from outside a system includes the path to it: the
-  laptop round trip added a variable delay, and a check that passes or fails
-  with nothing changed is measuring the wrong thing.
-  \item Sample size decides what a test can detect: 100 calls cannot tell a
-  10\% fault rate from 7\% or 13\%, while 10{,}000 calls can.
-  \item Switching configurations must start from a known state, or a setting
-  from the previous mode remains active and two faults are tested at once.
   \item CloudWatch log lines arrive a few seconds late, so a query must check
   that all expected lines are present before computing a statistic from them.
   \item Terraform state belongs to one folder: a second clone starts with an
@@ -2151,6 +2140,79 @@ Nov 21 & T5 also deduplicates in the dependency: the order ID is derived from
   (\texttt{AWS\_PROFILE} exported in the developer's terminal) rather than
   through the repository, so the Makefile now sets the profile explicitly and
   the commands no longer depend on how a terminal is configured.
+  \item Account limits shape the design: the free plan allows only a few
+  instance types, which an error at deployment, not the documentation I had
+  read, made clear.
+  \item Documented limits change: the Logs Insights row limit I first relied on
+  had risen from 10{,}000 to 100{,}000 in May 2026, so a limit quoted in a
+  report must be checked against the current documentation, not against
+  memory.
+\end{itemize}
+
+\subsection{Tools and Code}
+\begin{itemize}
+  \item The local interpreter can differ from the cloud runtime (Python 3.14
+  locally, 3.12 in Lambda); pinning the project version avoids tests that pass
+  locally but fail in Lambda.
+  \item In a Makefile, an undefined variable silently becomes an empty string,
+  so a missing \texttt{PY := ...} line produced confusing errors instead of a
+  clear message; the Makefile now calls the project interpreter
+  (\texttt{.venv/bin/python}) directly so it works without activating the
+  environment.
+  \item HTTP libraries can retry on their own (urllib3 does by default); left
+  enabled, these hidden retries would make the baseline configuration retry and
+  invalidate the comparison, so they are disabled and tested.
+  \item In Python, \texttt{True} counts as an integer, so input validation
+  compares exact types; otherwise \texttt{"quantity": true} would be accepted
+  as an order of one.
+  \item A configuration flag that accepts any value is a silent risk for an
+  experiment: a typing mistake would run the wrong configuration and still
+  produce plausible results, so the flags reject anything but true or false.
+  \item Tests prove code only on the version they run on: the price updater
+  passed every test on Python 3.13 and crashed on the project's Python 3.12,
+  so the tests now run on both.
+\end{itemize}
+
+\subsection{Measurement and Experiment}
+\begin{itemize}
+  \item A measurement taken from outside a system includes the path to it: the
+  laptop round trip added a variable delay, and a check that passes or fails
+  with nothing changed is measuring the wrong thing.
+  \item Sample size decides what a test can detect: 100 calls cannot tell a
+  10\% fault rate from 7\% or 13\%, while 10{,}000 calls can.
+  \item Switching configurations must start from a known state, or a setting
+  from the previous mode remains active and two faults are tested at once.
+  \item A test that changes the deployed system must restore it, or later
+  runs start from a hidden state; \texttt{terraform plan} showing no changes
+  confirms the restore.
+  \item A load generator can be the bottleneck while its CPU is idle: k6 had
+  to create virtual users in the middle of a run and dropped requests while
+  they started, and only the dropped-iteration rule revealed it.
+  \item Where the client runs is part of the measurement: the same API
+  answered in a median of 73\,ms from a home network and 33\,ms from the same
+  region.
+  \item A planned timing should be checked against a measured one: the run's
+  own records showed that k6 started 16\,s earlier than the orchestrator
+  assumed, which would have shifted the C7 outage.
+  \item Valid is not the same as right: all ten shakedown runs were valid, yet
+  one C7 run passed one minute fewer than its outage allowed, which revealed
+  windows that did not line up with the fault schedule.
+  \item Identical runs are not identical: the two Base runs of a session
+  differed by up to 4.4\,ms in p95, so no effect smaller than that can be
+  claimed, and only a planned A/A control could show it.
+  \item An unexpected zero is a question, not a bug or a finding: C3 showed no
+  cold starts because the warm-up had already created 147 environments, and a
+  check of the raw records explained it before it reached the report.
+  \item Timestamps from two machines need a margin: the T5 completion test
+  compares the laptop's clock with Lambda's, and a laptop running slightly fast
+  would have failed a correct system.
+  \item Automatic validity checks pay off when something does go wrong: the
+  only two invalid attempts of the project, a network drop and a missing
+  upload, were caught and repeated without my intervention.
+\end{itemize}
+
+\subsection{Testing and Design}
+\begin{itemize}
   \item Writing tests before code forces the specification to be exact: two
   details that looked settled in the midterm (the first backoff exponent and
   the cache expiry instant) had to be decided before a test could be written.
@@ -2165,43 +2227,55 @@ Nov 21 & T5 also deduplicates in the dependency: the order ID is derived from
   delay can lie within its bound while the distribution is still wrong, so the
   sampling check also compares the mean and the spread with what full jitter
   predicts.
-  \item A configuration flag that accepts any value is a silent risk for an
-  experiment: a typing mistake would run the wrong configuration and still
-  produce plausible results, so the flags reject anything but true or false.
-  \item A test that changes the deployed system must restore it, or later
-  runs start from a hidden state; \texttt{terraform plan} showing no changes
-  confirms the restore.
-  \item A load generator can be the bottleneck while its CPU is idle: k6 had
-  to create virtual users in the middle of a run and dropped requests while
-  they started, and only the dropped-iteration rule revealed it.
-  \item Where the client runs is part of the measurement: the same API
-  answered in a median of 73\,ms from a home network and 33\,ms from the same
-  region.
-  \item Account limits shape the design: the free plan allows only a few
-  instance types, which an error at deployment, not the documentation I had
-  read, made clear.
-  \item Tests prove code only on the version they run on: the price updater
-  passed every test on Python 3.13 and crashed on the project's Python 3.12,
-  so the tests now run on both.
-  \item A planned timing should be checked against a measured one: the run's
-  own records showed that k6 started 16\,s earlier than the orchestrator
-  assumed, which would have shifted the C7 outage.
   \item A failure path is worth testing before it is needed: the first real
   orchestrated runs crashed, and the re-queue, give-up, and restore logic
   handled them exactly as CT7 had specified.
   \item A test suite can pass while missing the edges: CT6 passed on the first
   run, but deliberate mistakes in the metrics module showed four cases no test
   looked at, such as a status of exactly 500.
-  \item A prediction must cover the whole workload: the 0.01\% expected with
-  retries held for reads, but orders, which are never retried, set a floor of
-  about 1\% for all requests, exactly at the SLO's threshold.
-  \item Valid is not the same as right: all ten shakedown runs were valid, yet
-  one C7 run passed one minute fewer than its outage allowed, which revealed
-  windows that did not line up with the fault schedule.
   \item Real data finds the edge cases synthetic data misses: C6, where no
   request succeeds, broke two outputs that every test had passed, the summary's
   printed table and the run figure's cost panel, both dividing by the number of
   successes.
+  \item Exactly once needs the key where the side effect happens:
+  deduplicating only in the Catalog could not tell whether a reservation that
+  timed out had been placed, and only carrying the key to the dependency's write
+  made it safe to retry orders.
+  \item A written specification makes delegated tests reviewable: the T5
+  tests could be checked line by line against rules fixed in advance, and the
+  review still found five gaps, such as a request without headers.
+  \item Mutation checks also find dead code: two filters in the report checker
+  changed no result, which only deliberate mistakes revealed.
+\end{itemize}
+
+\subsection{Analysis and Reporting}
+\begin{itemize}
+  \item A prediction must cover the whole workload: the 0.01\% expected with
+  retries held for reads, but orders, which are never retried, set a floor of
+  about 1\% for all requests, exactly at the SLO's threshold.
+  \item Mechanisms interact: in the outage, retries took away most of the
+  cache's protection, because busy environments made Lambda spread the traffic
+  over more and emptier caches; two helpful mechanisms together are not the sum
+  of the two.
+  \item State kept per execution environment is learned separately: with
+  retries, about 40 environments each needed five failures of their own before
+  their breakers opened, and reads spread over 32 environments rarely found a
+  stale entry to fall back on.
+  \item A mechanism can improve one measure and worsen another: the breaker
+  halved the outage error rate with the cache and removed the retry waits, but
+  its recovery tail cost one compliant minute, so the measure that decides must
+  be chosen before the results are read.
+  \item A binary verdict hides distance: with three 1-minute windows per run,
+  the SLO matrix says nothing about how far a configuration misses, so the
+  error rate and the cost have to be read beside it.
+  \item Numbers typed into a report by hand drift: an automatic comparison
+  with regenerated results found three wrongly typed numbers and a table bug,
+  so a check like \texttt{make check-report} belongs in a project from its
+  first table.
+  \item Generated files should be reproducible to the byte: with a fixed
+  creation date, regenerated figures are identical when their data is, so
+  version control shows only figures that really changed, and a rerun proves
+  reproducibility by changing nothing.
 \end{itemize}
 
 % =====================================================================
@@ -2323,6 +2397,13 @@ Nov 21 & T5 also deduplicates in the dependency: the order ID is derived from
   changes, which the agent made. Claude then wrote the T5 code against these
   tests, seven further tests, and the mutation check. I deployed the stack,
   ran the completion test, and merged the branch.
+  \item Nov 23: Claude drafted the objective in Section~1, Sections~3 and 4
+  with the two architecture figures and the conditions table, and the
+  references, opening each source it cites; that check found that the Logs
+  Insights row limit stated a day earlier was out of date, and the text was
+  corrected. Claude also grouped the lessons by topic and added those of the
+  last week. I reviewed each section, ran \texttt{make check-report} on the
+  result, and committed it.
 \end{itemize}
 
 % =====================================================================
